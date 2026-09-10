@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fake renderer used only by the isolated QML lifecycle test.
+printf '%s\n' "$*" >> "$UNDERPANTS_TEST_LOG"
+sleep 0.05

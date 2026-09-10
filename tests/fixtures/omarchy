@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$UNDERPANTS_TEST_LOG"
+if [[ $1 == "plugin" && $2 == "validate" ]]; then
+  exec "$UNDERPANTS_TEST_VALIDATOR" "$3"
+fi
+if [[ $1 == "plugin" && $2 == "list" ]]; then
+  printf '%s\n' '[{"id":"douper.underpants"}]'
+  exit 0
+fi
+[[ $1 == "plugin" && $2 == "enable" ]]

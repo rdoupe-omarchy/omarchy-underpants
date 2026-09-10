@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$UNDERPANTS_TEST_LOG"
+[[ $1 == "shell" && $2 == "rescanPlugins" ]]

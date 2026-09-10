@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+dist/
+preview*.png
+!preview.png
+preview.qml

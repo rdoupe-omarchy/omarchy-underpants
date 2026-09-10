@@ -1,0 +1,14 @@
+{
+  "system.underpants": {
+    "icon": "󰍹",
+    "label": "Underpants Gnomes — Story",
+    "description": "A three-phase heist. Better computers. For everyone. Including the gnomes.",
+    "action": "omarchy-shell shell summon douper.underpants '{\"mode\":\"story\"}'"
+  },
+  "system.underpants-zen": {
+    "icon": "󰍹",
+    "label": "Underpants Gnomes — Zen",
+    "description": "An endless Omarchy logo, laundry and gnomes. No text or story.",
+    "action": "omarchy-shell shell summon douper.underpants '{\"mode\":\"zen\"}'"
+  }
+}
