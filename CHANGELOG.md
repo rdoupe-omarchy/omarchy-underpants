@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1 — Unreleased
+
+- Document wiring Underpants as the default Omarchy idle screensaver via a `~/.local/bin` PATH override (prepend required; Omarchy appends that dir last).
+- Optional `scripts/install-default-screensaver.sh` writes the wrapper and prints the PATH reminder (does not edit shell rc).
+
 ## 2.0.0 — Unreleased
 
 - Bundle Story and Zen as two modes of one standard Omarchy overlay plugin.

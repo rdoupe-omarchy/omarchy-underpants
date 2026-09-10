@@ -17,7 +17,7 @@ The local Claude Omarchy skill points to the same installed Omarchy skill used b
 ## Package identity
 
 - One repository, one permanent ID: `douper.underpants`.
-- Version: `2.0.0`; keep unpublished changes under this release candidate until release approval.
+- Version: `2.0.1`; keep unpublished changes under this release candidate until release approval.
 - Two user-facing modes: Story and Zen; both use the overlay's `mode` JSON payload.
 - Suggested category: `Appearance`.
 - Suggested tags: `hyprland, quickshell`.
@@ -43,7 +43,7 @@ Use the exact submission headings from SUBMISSION.md. Leave unconfirmed checklis
 ```bash
 python3 scripts/package.py
 cd dist
-sha256sum -c omarchy-underpants-2.0.0.tar.gz.sha256
+sha256sum -c omarchy-underpants-2.0.1.tar.gz.sha256
 ```
 
 The archive has a single top-level directory, a fixed file allowlist, normalized modes/timestamps, and a SHA-256 checksum. Repeated builds from identical sources produce identical bytes. No network or publishing operation is performed.
