@@ -12,7 +12,7 @@ qmllint -I "$OMARCHY_PATH/shell" Launcher.qml
 python3 scripts/package.py
 ```
 
-The Python suite covers Story/Zen rendering, phase boxes, moving question marks and coins, readable final lettering, dimensions, CLI rejection paths, all four terminal command builders, mocked multi-monitor launch/cleanup, PTY dismissal/restoration, installer consent/backups, QML cancellation/reopening and byte-reproducible packaging.
+The Python suite covers Story/Zen rendering, phase boxes, moving question marks and coins, readable final lettering, dimensions, CLI rejection paths, all four terminal command builders, mocked multi-monitor launch/cleanup, no-follow/exclusive session-lock creation (symlink, FIFO, hardlink and world-accessible runtime rejection), PTY dismissal/restoration, installer consent/backups, QML cancellation/reopening and byte-reproducible packaging.
 
 It also renders every 12-fps frame through one complete Story loop/reset and two Zen theft cycles, including ANSI colour encoding, and verifies Linux parent-death cleanup when the launcher is forcibly killed.
 
