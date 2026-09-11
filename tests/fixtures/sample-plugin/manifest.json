@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "example.plugin",
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "entryPoints": {
+    "overlay": "Launcher.qml"
+  }
+}
