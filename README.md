@@ -31,7 +31,7 @@ bash install.sh
 
 Requires Omarchy Quattro with its shell plugin API (tested with 4.0.3-1), Python 3.11 or later, Hyprland/`hyprctl`, `xdg-terminal-exec`, and one of the supported terminals. No root access, network access at runtime, background service, native build, or extra Python dependencies are needed. Foot is live-tested; Alacritty, Ghostty and Kitty launch arguments are tested but their live rendering remains unverified.
 
-The installer validates and copies the plugin. Add `--enable` to explicitly rescan and enable it. Replacing an existing local copy requires `--force` and creates a backup first; Git-managed and symlinked copies are not overwritten. Omarchy discovers plugins under `~/.config/omarchy/plugins/`, so the installer intentionally follows that path even if `XDG_CONFIG_HOME` differs. Installing into a watched plugin directory may reload shell code; choose a convenient time. This preparation checkout is separate from the installed copy.
+The installer validates and copies the plugin. Add `--enable` to explicitly rescan and enable it. Replacing an existing local copy requires `--force` and creates a backup first; Git-managed and symlinked copies are not overwritten. Parent directories are created and files published through held directory descriptors (no-follow exclusive temps, then an atomic rename) so a swapped parent or planted symlink cannot redirect the write. Omarchy discovers plugins under `~/.config/omarchy/plugins/`, so the installer intentionally uses that path even if `XDG_CONFIG_HOME` differs. Installing into a watched plugin directory may reload shell code; choose a convenient time. This preparation checkout is separate from the installed copy.
 
 ```bash
 bash install.sh --enable          # new local installation and explicit activation
@@ -67,11 +67,9 @@ Omarchy’s idle service runs `bash -lc` → `omarchy-launch-screensaver`. The s
 **Important:** Omarchy’s `env-bootstrap` **appends** `~/.local/bin` at the end of `PATH`. A wrapper there does **not** beat the stock binary unless you **prepend** `~/.local/bin` for login shells (idle uses `bash -lc`).
 
 1. Install and enable the plugin first (`bash install.sh --enable`, or `omarchy plugin add … --enable`).
-2. Create `~/.local/bin/omarchy-launch-screensaver` (or run the optional helper in step 2b):
+2. Install the idle wrapper with the helper in step 2b (refuses an unexpected existing name; does not `cat >` a pathname). The wrapper payload is:
 
 ```bash
-mkdir -p ~/.local/bin
-cat > ~/.local/bin/omarchy-launch-screensaver << 'EOF'
 #!/bin/bash
 # Community PATH override: launch Underpants Gnomes instead of stock ttfx.
 # Matches stock early-exit behaviour; does not change lock timings.
@@ -84,11 +82,9 @@ fi
 
 exec python3 "$HOME/.config/omarchy/plugins/douper.underpants/screensaver.py" \
   --launch --mode "${UNDERPANTS_MODE:-story}"
-EOF
-chmod +x ~/.local/bin/omarchy-launch-screensaver
 ```
 
-2b. Optional helper (writes the same wrapper; does **not** edit your shell rc):
+2b. Optional helper (descriptor-safe write of the same wrapper; does **not** edit your shell rc; refuses if the wrapper name already exists):
 
 ```bash
 bash scripts/install-default-screensaver.sh

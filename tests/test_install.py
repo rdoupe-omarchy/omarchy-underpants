@@ -6,10 +6,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR = shutil.which("omarchy-plugin-validate")
+VALIDATOR = shutil.which("omarchy-plugin-validate") or str(ROOT / "tests/fixtures/omarchy-plugin-validate")
 
 
-@unittest.skipUnless(VALIDATOR, "Omarchy validator not installed")
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
@@ -80,3 +79,17 @@ class InstallerTests(unittest.TestCase):
     def test_unknown_option_does_not_write(self):
         self.assertEqual(self.install("--typo").returncode, 2)
         self.assertFalse(self.target.exists())
+
+    def test_parent_symlink_is_not_followed(self):
+        real = self.tmp / "real-plugins"
+        real.mkdir()
+        victim = real / "douper.underpants"
+        victim.mkdir()
+        (victim / "README.md").write_text("keep")
+        plugins = self.home / ".config/omarchy/plugins"
+        plugins.parent.mkdir(parents=True)
+        plugins.symlink_to(real)
+        result = self.install("--force")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((victim / "README.md").read_text(), "keep")
+        self.assertEqual(list(victim.iterdir()), [victim / "README.md"])

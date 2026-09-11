@@ -1,0 +1,13 @@
+#!/bin/bash
+# Isolated test stand-in used only when the real Omarchy validator is absent.
+set -euo pipefail
+target=${1:?}
+for name in manifest.json Launcher.qml screensaver.py README.md LICENSE menu-entries.json; do
+  [[ -f $target/$name ]]
+done
+python3 - "$target/manifest.json" << 'PY'
+import json, sys
+manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
+assert manifest.get("id") == "douper.underpants"
+assert "overlay" in manifest.get("kinds", [])
+PY

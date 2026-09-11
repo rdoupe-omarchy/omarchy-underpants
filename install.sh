@@ -17,23 +17,12 @@ for arg in "$@"; do
   esac
 done
 omarchy plugin validate "$source_dir"
-if [[ -L $target || -e $target/.git ]]; then
-  printf '%s\n' 'Refusing to overwrite a symlink or Git-managed plugin; update that checkout separately.' >&2
-  exit 1
-fi
 if [[ $source_dir != "$target" ]]; then
-  if [[ -e $target ]]; then
-    if [[ $force != "true" ]]; then
-      printf '%s\n' 'A local plugin already exists. Use --force to back it up and replace it.' >&2
-      exit 1
-    fi
-    omarchy plugin validate "$target"
-    backup=$(mktemp -d "$HOME/.config/omarchy/underpants-backup.XXXXXXXX")
-    cp -a -- "$target" "$backup/plugin"
-    printf 'Saved previous plugin to %s/plugin\n' "$backup"
+  publish=(python3 "$source_dir/scripts/safe_publish.py" install-plugin --source "$source_dir" --home "$HOME")
+  if [[ $force == "true" ]]; then
+    publish+=(--force)
   fi
-  mkdir -p -- "$target"
-  install -m644 "$source_dir"/{manifest.json,Launcher.qml,screensaver.py,README.md,LICENSE,menu-entries.json} "$target/"
+  "${publish[@]}"
 fi
 omarchy plugin validate "$target"
 if [[ $enable == "true" ]]; then

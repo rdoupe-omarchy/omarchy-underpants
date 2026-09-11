@@ -5,18 +5,18 @@ Run from the repository root:
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q screensaver.py scripts tests
-bash -n install.sh
-shellcheck install.sh tests/fixtures/*
+bash -n install.sh scripts/install-default-screensaver.sh
+shellcheck install.sh scripts/install-default-screensaver.sh tests/fixtures/*
 omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Launcher.qml
 python3 scripts/package.py
 ```
 
-The Python suite covers Story/Zen rendering, phase boxes, moving question marks and coins, readable final lettering, dimensions, CLI rejection paths, all four terminal command builders, mocked multi-monitor launch/cleanup, no-follow/exclusive session-lock creation (symlink, FIFO, hardlink and world-accessible runtime rejection), PTY dismissal/restoration, installer consent/backups, QML cancellation/reopening and byte-reproducible packaging.
+The Python suite covers Story/Zen rendering, phase boxes, moving question marks and coins, readable final lettering, dimensions, CLI rejection paths, all four terminal command builders, mocked multi-monitor launch/cleanup, no-follow/exclusive session-lock creation (symlink, FIFO, hardlink and world-accessible runtime rejection), PTY dismissal/restoration, installer consent/backups, no-follow/exclusive installer publish (symlink parents, planted wrapper/plugin names, FIFO and existing-file refusal), QML cancellation/reopening and byte-reproducible packaging.
 
 It also renders every 12-fps frame through one complete Story loop/reset and two Zen theft cycles, including ANSI colour encoding, and verifies Linux parent-death cleanup when the launcher is forcibly killed.
 
-Installer tests use a temporary fixture home and fake shell commands; they never rescan or enable the live desktop. They require the real Omarchy manifest validator. The QML test uses offscreen software rendering, a temporary runtime directory, no desktop sockets and a fake Python renderer; it requires Quickshell. Missing optional test tools are reported as skipped, not as verified runtime coverage.
+Installer tests use a temporary fixture home and fake shell commands; they never rescan or enable the live desktop. They prefer the real Omarchy manifest validator and fall back to a fixture that only checks the shipped file set and manifest id. The QML test uses offscreen software rendering, a temporary runtime directory, no desktop sockets and a fake Python renderer; it requires Quickshell. Missing optional test tools are reported as skipped, not as verified runtime coverage.
 
 ## Private-desktop acceptance
 
