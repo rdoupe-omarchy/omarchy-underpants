@@ -4,6 +4,7 @@ import json
 import os
 import select
 import signal
+import stat
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,21 @@ from unittest.mock import Mock, patch
 from test_screensaver import SOURCE, saver
 
 ROOT = SOURCE.parent
+
+
+def assert_only_private_lock_remains(test, runtime):
+    entries = list(Path(runtime).iterdir())
+    test.assertEqual([path.name for path in entries], [saver.RUNTIME_SUBDIR])
+    private = entries[0]
+    test.assertTrue(private.is_dir())
+    test.assertFalse(private.is_symlink())
+    test.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+    leftover = list(private.iterdir())
+    test.assertEqual(len(leftover), 1, leftover)
+    test.assertTrue(leftover[0].is_file())
+    test.assertFalse(leftover[0].is_symlink())
+    test.assertEqual(leftover[0].stat().st_nlink, 1)
+    test.assertEqual(leftover[0].stat().st_uid, os.geteuid())
 
 
 class ReleaseTests(unittest.TestCase):
@@ -82,7 +98,8 @@ class ReleaseTests(unittest.TestCase):
                         return {"class": "another.app"}
                     self.fail(args)
 
-                with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "OMARCHY_PATH": "/omarchy"}), \
+                with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "OMARCHY_PATH": "/omarchy",
+                                             "HYPRLAND_INSTANCE_SIGNATURE": "testhipr"}), \
                      patch.object(saver, "hypr", side_effect=hypr), \
                      patch.object(saver, "focus_monitor") as focus, \
                      patch.object(saver.subprocess, "Popen", side_effect=spawn), \
@@ -97,21 +114,22 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(command[command.index("--duration") + 1], "9")
                     child.terminate.assert_called_once()
                     child.wait.assert_called_once_with(timeout=3)
-                self.assertEqual(len(list(Path(runtime).iterdir())), 1)  # lock only, no stale stop/session
+                assert_only_private_lock_remains(self, runtime)
 
     def test_startup_failure_cleans_up_child(self):
         with tempfile.TemporaryDirectory() as runtime:
             args = argparse.Namespace(terminal="foot", preview=False, offset=0, duration=0, mode="story")
             child = Mock()
             child.poll.return_value = 1
-            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "OMARCHY_PATH": "/omarchy"}), \
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "OMARCHY_PATH": "/omarchy",
+                                         "HYPRLAND_INSTANCE_SIGNATURE": "testhipr"}), \
                  patch.object(saver, "hypr", side_effect=[[{"name": "A", "id": 0}], [], []]), \
                  patch.object(saver, "focus_monitor"), \
                  patch.object(saver.subprocess, "Popen", return_value=child), \
                  self.assertRaisesRegex(RuntimeError, "exited during startup"):
                 saver.launch(args)
             child.wait.assert_called_once_with(timeout=3)
-            self.assertEqual(len(list(Path(runtime).iterdir())), 1)
+            assert_only_private_lock_remains(self, runtime)
 
     def test_existing_screensaver_prevents_launch(self):
         with patch.object(saver, "hypr", side_effect=[[], [{"class": saver.APP_ID}]]), \
@@ -144,6 +162,129 @@ class ReleaseTests(unittest.TestCase):
                     signal.pidfd_send_signal(fd, signal.SIGKILL)
                 os.close(fd)
             supervisor.stdout.close()
+
+    def test_lock_open_flags_are_nofollow_exclusive_and_do_not_truncate(self):
+        self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_EXCL)
+        self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_NOFOLLOW)
+        self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_CREAT)
+        self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_RDWR)
+        self.assertFalse(saver.LOCK_CREATE_FLAGS & getattr(os, "O_TRUNC", 0))
+        self.assertTrue(saver.LOCK_REOPEN_FLAGS & os.O_NOFOLLOW)
+        self.assertTrue(saver.LOCK_REOPEN_FLAGS & os.O_RDWR)
+        self.assertFalse(saver.LOCK_REOPEN_FLAGS & getattr(os, "O_TRUNC", 0))
+        self.assertFalse(saver.LOCK_REOPEN_FLAGS & os.O_CREAT)
+        self.assertTrue(saver.DIR_OPEN_FLAGS & os.O_NOFOLLOW)
+        self.assertTrue(saver.DIR_OPEN_FLAGS & os.O_DIRECTORY)
+
+    def test_session_lock_creates_private_owned_regular_file(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            env = {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "testhipr"}
+            with patch.dict(os.environ, env):
+                with saver.session_lock() as state_dir:
+                    self.assertEqual(state_dir, Path(runtime) / saver.RUNTIME_SUBDIR)
+                    lock = state_dir / saver.session_lock_name()
+                    self.assertTrue(lock.is_file())
+                    self.assertFalse(lock.is_symlink())
+                    info = lock.stat()
+                    self.assertTrue(stat.S_ISREG(info.st_mode))
+                    self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+                    self.assertEqual(info.st_nlink, 1)
+                    self.assertEqual(info.st_uid, os.geteuid())
+                    with saver.session_lock() as busy:
+                        self.assertIsNone(busy)
+
+    def test_lock_does_not_follow_or_truncate_symlink(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            private = Path(runtime) / saver.RUNTIME_SUBDIR
+            private.mkdir(0o700)
+            victim = Path(runtime) / "victim"
+            victim.write_bytes(b"precious-data")
+            planted = private / "default.lock"
+            planted.symlink_to(victim)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            self.assertEqual(victim.read_bytes(), b"precious-data")
+            self.assertTrue(planted.is_symlink())
+            self.assertEqual(os.readlink(planted), str(victim))
+
+    def test_lock_rejects_runtime_and_private_dir_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real"
+            real.mkdir(0o700)
+            link = Path(tmp) / "link"
+            link.symlink_to(real)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(link), "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            self.assertEqual(list(real.iterdir()), [])
+
+            runtime = Path(tmp) / "runtime"
+            runtime.mkdir(0o700)
+            private = runtime / saver.RUNTIME_SUBDIR
+            private.symlink_to(real)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime), "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            self.assertEqual(list(real.iterdir()), [])
+
+    def test_lock_rejects_nonregular_world_accessible_and_hardlinked_files(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            private = Path(runtime) / saver.RUNTIME_SUBDIR
+            private.mkdir(0o700)
+            fifo = private / "default.lock"
+            os.mkfifo(fifo, 0o600)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            fifo.unlink()
+
+            os.chmod(runtime, 0o777)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            os.chmod(runtime, 0o700)
+
+            lock = private / "default.lock"
+            lock.write_bytes(b"")
+            os.chmod(lock, 0o600)
+            extra = Path(runtime) / "hardlink"
+            os.link(lock, extra)
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "default"}):
+                with self.assertRaises(RuntimeError):
+                    with saver.session_lock():
+                        pass
+            extra.unlink()
+
+    def test_missing_or_relative_runtime_dir_fails_closed(self):
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": ""}, clear=False):
+            os.environ.pop("XDG_RUNTIME_DIR", None)
+            with self.assertRaisesRegex(RuntimeError, "XDG_RUNTIME_DIR"):
+                with saver.session_lock():
+                    pass
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": "relative/runtime"}):
+            with self.assertRaisesRegex(RuntimeError, "XDG_RUNTIME_DIR"):
+                with saver.session_lock():
+                    pass
+        with patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "../escape"}):
+            with self.assertRaisesRegex(RuntimeError, "instance signature"):
+                saver.session_lock_name()
+
+    def test_busy_lock_skips_launch_without_spawning(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            env = {"XDG_RUNTIME_DIR": runtime, "OMARCHY_PATH": "/omarchy",
+                   "HYPRLAND_INSTANCE_SIGNATURE": "testhipr"}
+            with patch.dict(os.environ, env), saver.session_lock() as held:
+                self.assertIsNotNone(held)
+                with patch.object(saver, "hypr", side_effect=[[{"name": "A", "id": 0, "focused": True}], []]), \
+                     patch.object(saver.subprocess, "Popen") as spawn:
+                    saver.launch(argparse.Namespace(terminal="foot", preview=False, offset=0, duration=0, mode="story"))
+                    spawn.assert_not_called()
 
 
 if __name__ == "__main__":

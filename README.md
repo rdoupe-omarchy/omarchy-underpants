@@ -38,7 +38,7 @@ bash install.sh --enable          # new local installation and explicit activati
 bash install.sh --force --enable  # back up and replace an existing local copy
 ```
 
-Neither installation nor activation edits your menu or idle/lock settings. The plugin is a screensaver, not a security lock. Like all Omarchy plugins it runs unsandboxed with your user permissions; review the source before enabling it. Its only runtime writes are session lock/stop files in your runtime directory. It starts its own terminal processes and requests monitor focus while mapping them; dismissal stops only those processes.
+Neither installation nor activation edits your menu or idle/lock settings. The plugin is a screensaver, not a security lock. Like all Omarchy plugins it runs unsandboxed with your user permissions; review the source before enabling it. Its only runtime writes are session lock/stop files in a private subdirectory of your runtime directory. It starts its own terminal processes and requests monitor focus while mapping them; dismissal stops only those processes.
 
 After replacing QML in an already loaded copy, restart the shell at a convenient time with `omarchy restart shell`: current Quickshell versions may cache the old component at the same path despite a plugin rescan. The installer does not restart your desktop automatically.
 

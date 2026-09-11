@@ -4,6 +4,7 @@
 
 - Document wiring Underpants as the default Omarchy idle screensaver via a `~/.local/bin` PATH override (prepend required; Omarchy appends that dir last).
 - Optional `scripts/install-default-screensaver.sh` writes the wrapper and prints the PATH reminder (does not edit shell rc).
+- Create the session lock in a verified private XDG runtime subdirectory with no-follow/exclusive descriptor-safe open, owner/type/link checks, and no symlink truncation.
 
 ## 2.0.0 — Unreleased
 

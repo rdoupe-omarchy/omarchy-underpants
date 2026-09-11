@@ -2,6 +2,7 @@
 """Underpants Gnomes: a silent, text-only Omarchy screensaver."""
 
 import argparse
+import contextlib
 import ctypes
 import fcntl
 import json
@@ -11,6 +12,7 @@ from pathlib import Path
 import select
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,12 @@ import time
 import tty
 
 APP_ID = "org.omarchy.screensaver"
+RUNTIME_SUBDIR = "douper.underpants"
+DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+LOCK_CREATE_FLAGS = (
+    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+)
+LOCK_REOPEN_FLAGS = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 HEIST_END = 21
 PROFIT_START = 26
 CYCLE = 53
@@ -597,6 +605,103 @@ def owned_terminal_setup():
     return setup
 
 
+def session_lock_name():
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "default")
+    if not signature or len(signature) > 128 or not all(c.isalnum() or c in "._-" for c in signature):
+        raise RuntimeError("Refusing an unsafe Hyprland instance signature.")
+    return signature + ".lock"
+
+
+def _require_private_dir(fd, label):
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError(f"Refusing to use {label}: not a directory.")
+    if info.st_uid != os.geteuid():
+        raise RuntimeError(f"Refusing to use {label}: unexpected owner.")
+    if info.st_mode & 0o077:
+        raise RuntimeError(f"Refusing to use {label}: group or other access is not allowed.")
+
+
+def _require_private_lock(fd):
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError("Refusing to use a non-regular screensaver lock.")
+    if info.st_uid != os.geteuid():
+        raise RuntimeError("Refusing to use a screensaver lock with an unexpected owner.")
+    if info.st_nlink != 1:
+        raise RuntimeError("Refusing to use a linked screensaver lock.")
+    if info.st_mode & 0o177:
+        raise RuntimeError("Refusing to use a screensaver lock that is accessible to others.")
+    return info
+
+
+def _open_lock_fd(private_fd):
+    name = session_lock_name()
+    try:
+        fd = os.open(name, LOCK_CREATE_FLAGS, 0o600, dir_fd=private_fd)
+    except FileExistsError:
+        try:
+            fd = os.open(name, LOCK_REOPEN_FLAGS, dir_fd=private_fd)
+        except OSError as error:
+            raise RuntimeError("Refusing to open the screensaver lock.") from error
+    except OSError as error:
+        raise RuntimeError("Refusing to create the screensaver lock.") from error
+    try:
+        _require_private_lock(fd)
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+@contextlib.contextmanager
+def session_lock():
+    """Yield a verified private runtime directory after taking its exclusive lock.
+
+    Returns None if another Underpants instance already holds the lock. Any
+    symlink, ownership, type, or link-count problem fails closed.
+    """
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise RuntimeError("Refusing to create a session lock without no-follow directory support.")
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        raise RuntimeError("A graphical login session is required (XDG_RUNTIME_DIR is missing).")
+    runtime = runtime.rstrip("/") or runtime
+    if not os.path.isabs(runtime) or "\x00" in runtime:
+        raise RuntimeError("A graphical login session is required (XDG_RUNTIME_DIR is invalid).")
+
+    runtime_fd = private_fd = lock_fd = None
+    try:
+        try:
+            runtime_fd = os.open(runtime, DIR_OPEN_FLAGS)
+        except OSError as error:
+            raise RuntimeError("Refusing to use XDG_RUNTIME_DIR: it must be a private directory.") from error
+        _require_private_dir(runtime_fd, "XDG_RUNTIME_DIR")
+        try:
+            os.mkdir(RUNTIME_SUBDIR, 0o700, dir_fd=runtime_fd)
+        except FileExistsError:
+            pass
+        try:
+            private_fd = os.open(RUNTIME_SUBDIR, DIR_OPEN_FLAGS, dir_fd=runtime_fd)
+        except OSError as error:
+            raise RuntimeError("Refusing to use the Underpants runtime directory.") from error
+        _require_private_dir(private_fd, "the Underpants runtime directory")
+        lock_fd = _open_lock_fd(private_fd)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield None
+            return
+        _require_private_lock(lock_fd)
+        yield Path(runtime) / RUNTIME_SUBDIR
+    finally:
+        for fd in (lock_fd, private_fd, runtime_fd):
+            if fd is not None:
+                os.close(fd)
+
+
 def launch(args):
     monitors = hypr("monitors", "-j", json_output=True)
     if any(c.get("class") == APP_ID for c in hypr("clients", "-j", json_output=True)):
@@ -604,20 +709,14 @@ def launch(args):
     terminal = args.terminal or subprocess.check_output(["xdg-terminal-exec", "--print-id"], text=True).strip()
     original = next((m["name"] for m in monitors if m.get("focused")), None)
     children = []
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime:
-        raise RuntimeError("A graphical login session is required (XDG_RUNTIME_DIR is missing).")
-    lock_path = Path(runtime) / ("underpants-" + os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "default") + ".lock")
-    with lock_path.open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+    with session_lock() as state_dir:
+        if state_dir is None:
             return
         # Recheck under the lock: another launch may have mapped its windows
         # between the first compositor query and our lock acquisition.
         if any(c.get("class") == APP_ID for c in hypr("clients", "-j", json_output=True)):
             return
-        with tempfile.TemporaryDirectory(prefix="underpants-", dir=runtime) as session:
+        with tempfile.TemporaryDirectory(prefix="underpants-", dir=str(state_dir)) as session:
             stop = Path(session) / "stop"
             try:
                 for monitor in monitors:
