@@ -3,34 +3,8 @@
 # Does NOT edit ~/.bashrc or any shell rc — print the PATH reminder only.
 set -euo pipefail
 
-bin_dir="${HOME}/.local/bin"
-wrapper="${bin_dir}/omarchy-launch-screensaver"
-plugin_py="${HOME}/.config/omarchy/plugins/douper.underpants/screensaver.py"
-
-if [[ ! -f "$plugin_py" ]]; then
-  echo "Plugin not found at: $plugin_py" >&2
-  echo "Install and enable douper.underpants first (bash install.sh --enable)." >&2
-  exit 1
-fi
-
-mkdir -p "$bin_dir"
-
-cat > "$wrapper" << 'WRAP'
-#!/bin/bash
-# Community PATH override: launch Underpants Gnomes instead of stock ttfx.
-# Matches stock early-exit behaviour; does not change lock timings.
-
-pgrep -f '[o]rg.omarchy.screensaver' >/dev/null && exit 0
-
-if omarchy-toggle-enabled screensaver-off && [[ ${1:-} != "force" ]]; then
-  exit 1
-fi
-
-exec python3 "$HOME/.config/omarchy/plugins/douper.underpants/screensaver.py" \
-  --launch --mode "${UNDERPANTS_MODE:-story}"
-WRAP
-
-chmod +x "$wrapper"
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$here/safe_publish.py" install-wrapper --home "$HOME"
 
 cat << 'MSG'
 Wrote ~/.local/bin/omarchy-launch-screensaver
