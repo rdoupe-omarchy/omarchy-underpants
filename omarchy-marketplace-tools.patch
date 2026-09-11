@@ -1,0 +1,451 @@
+From 072fb3634d20103249bea75ac9640597a6ff56b9 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Fri, 11 Sep 2026 00:55:25 +0000
+Subject: [PATCH] Add a local runner for the official marketplace security
+ baseline.
+
+Wraps omacom/omarchy-plugin-marketplace scripts/security-baseline.mjs
+with schemaVersion 1 validation metadata. This tree is ops tooling, not
+a plugin, and must not merge into Underpants main.
+
+Co-authored-by: rdoupe <rdoupe@users.noreply.github.com>
+---
+ .gitignore                                   |   5 +
+ LICENSE                                      |  21 +++
+ README.md                                    | 118 ++++++++++++
+ scripts/run-marketplace-security-baseline.sh | 180 +++++++++++++++++++
+ tests/fixtures/sample-plugin/manifest.json   |   9 +
+ tests/test_security_baseline_runner.py       |  53 ++++++
+ 6 files changed, 386 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 LICENSE
+ create mode 100644 README.md
+ create mode 100755 scripts/run-marketplace-security-baseline.sh
+ create mode 100644 tests/fixtures/sample-plugin/manifest.json
+ create mode 100644 tests/test_security_baseline_runner.py
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..377b2f7
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,5 @@
++.cache/
++*.pyc
++__pycache__/
++.pytest_cache/
++/tmp/
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..2e95749
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 douper
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..9f9dc1a
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,118 @@
++# omarchy-marketplace-tools
++
++Ops wrappers for the official Omarchy plugin marketplace. **This is not a plugin**
++and must not be submitted to the marketplace.
++
++The first tool replays the Automated Security Baseline that GitHub Actions bots
++run from
++[omacom/omarchy-plugin-marketplace](https://github.com/omacom/omarchy-plugin-marketplace)
++`scripts/security-baseline.mjs` after validation writes `validation-metadata.json`.
++
++It is a static exact-commit check, not a security audit. It does not execute
++plugin code. Official workflows use Node 24.
++
++This tree was relocated out of
++[rdoupe-omarchy/omarchy-underpants#2](https://github.com/rdoupe-omarchy/omarchy-underpants/pull/2)
++so Underpants `main` can stay frozen at `aab69655` for marketplace #6213.
++
++## Create this GitHub repo (required)
++
++This agent could not create `rdoupe-omarchy/omarchy-marketplace-tools` (GitHub
++API 403). From a machine with org `repo` create permission:
++
++```bash
++gh repo create rdoupe-omarchy/omarchy-marketplace-tools \
++  --public \
++  --description "Local runner for the official Omarchy marketplace Automated Security Baseline (ops, not a plugin)"
++```
++
++Then publish this orphan tree (currently parked on Underpants so the files are
++fetchable, **not** as a merge to Underpants `main`):
++
++```bash
++git clone --branch cursor/omarchy-marketplace-tools-706c \
++  https://github.com/rdoupe-omarchy/omarchy-underpants.git \
++  omarchy-marketplace-tools
++cd omarchy-marketplace-tools
++git remote set-url origin https://github.com/rdoupe-omarchy/omarchy-marketplace-tools.git
++git push -u origin cursor/omarchy-marketplace-tools-706c:main
++```
++
++Alternatively apply `omarchy-marketplace-tools.patch` onto a fresh empty repo
++and push.
++
++## Wrapper
++
++```bash
++bash scripts/run-marketplace-security-baseline.sh \
++  --repo https://github.com/rdoupe-omarchy/omarchy-underpants \
++  --sha aab69655c08c9d0e0769be854bd44f58b4c59aac
++```
++
++From a plugin checkout (infers `origin` + `HEAD` unless overridden):
++
++```bash
++bash scripts/run-marketplace-security-baseline.sh --local /path/to/plugin
++```
++
++## Exact bot command
++
++```bash
++git clone --depth 1 https://github.com/omacom/omarchy-plugin-marketplace.git \
++  /tmp/omarchy-plugin-marketplace
++
++# Official writeValidationMetadata fields (schemaVersion 1), plus
++# listedPlugins.entryPoints from that commit's root manifest.json.
++# The scanner requires listedPlugins[].pluginId and listedPlugins[].manifestPathHint.
++cat > /tmp/validation-metadata.json <<'EOF'
++{
++  "schemaVersion": 1,
++  "repoUrl": "https://github.com/rdoupe-omarchy/omarchy-underpants",
++  "commitSha": "aab69655c08c9d0e0769be854bd44f58b4c59aac",
++  "pluginIds": ["douper.underpants"],
++  "listedPlugins": [
++    {
++      "pluginId": "douper.underpants",
++      "manifestPathHint": "manifest.json",
++      "entryPoints": { "overlay": "Launcher.qml" }
++    }
++  ],
++  "entryPoints": ["Launcher.qml"]
++}
++EOF
++
++node /tmp/omarchy-plugin-marketplace/scripts/security-baseline.mjs \
++  --metadata=/tmp/validation-metadata.json \
++  --json=/tmp/security-baseline.json
++```
++
++Stdout is the markdown report bots post. `--json` is the machine-readable
++`outcome`, `findings`, `capabilities`, and `verifiedPublicationDisposition`.
++
++Exit `0` means a complete result (`passed`, `review-required`, or
++`needs-fixes`). Exit `3` is a scan-limit failure. Exit `2` is an invalid or
++unavailable scan.
++
++## Tests
++
++```bash
++python3 -m unittest discover -s tests
++```
++
++## What this catch set is
++
++V3 selective policy findings (only these):
++
++- `curl-pipe-shell`
++- `cargo-git-unpinned`
++- `remote-git-execution-unpinned`
++- `sudoers-dangerous-passwordless-command`
++- `privileged-process-control-from-shared-temp`
++
++Capabilities (review, not findings): `installer`, `package-manager`,
++`privilege`, `remote-build`, `bundled-executable-binary`,
++`service-management`, `sudoers-modification`.
++
++The public scanner does **not** detect generic `open("w")` + `flock` TOCTOU,
++AGENTS.md prompt injection, or other review-only issues. Those comments are
++human/AI maintainer review, not `security-baseline.mjs`.
+diff --git a/scripts/run-marketplace-security-baseline.sh b/scripts/run-marketplace-security-baseline.sh
+new file mode 100755
+index 0000000..10c980e
+--- /dev/null
++++ b/scripts/run-marketplace-security-baseline.sh
+@@ -0,0 +1,180 @@
++#!/usr/bin/env bash
++# Run the official Omarchy marketplace Automated Security Baseline
++# (the same scripts/security-baseline.mjs GitHub Actions bots execute).
++#
++# This is a local wrapper. It does not edit marketplace issues and is not a
++# security audit. See README.md.
++set -euo pipefail
++
++usage() {
++  cat <<'EOF'
++Usage:
++  scripts/run-marketplace-security-baseline.sh [options]
++
++Options:
++  --repo URL          Public GitHub repository root URL
++  --sha SHA           Full 40-character commit SHA (or a git rev if --local)
++  --plugin-id ID      Override plugin ID (default: root manifest.json "id")
++  --out DIR           Write metadata, report, and JSON here
++  --marketplace DIR   Existing omacom/omarchy-plugin-marketplace checkout
++  --local DIR         Read root manifest.json from this checkout
++  --json-only         Print only the JSON outcome path on stdout
++  --metadata-only     Write validation-metadata.json and exit 0
++  -h, --help          Show this help
++
++Examples:
++  scripts/run-marketplace-security-baseline.sh \
++    --repo https://github.com/rdoupe-omarchy/omarchy-underpants \
++    --sha aab69655c08c9d0e0769be854bd44f58b4c59aac
++
++  scripts/run-marketplace-security-baseline.sh --local /path/to/plugin --sha HEAD
++EOF
++}
++
++repo_url=""
++commit_sha=""
++plugin_id=""
++out_dir=""
++marketplace_dir="${MARKETPLACE_DIR:-}"
++local_dir=""
++json_only=0
++metadata_only=0
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --repo) repo_url="${2:-}"; shift 2 ;;
++    --sha) commit_sha="${2:-}"; shift 2 ;;
++    --plugin-id) plugin_id="${2:-}"; shift 2 ;;
++    --out) out_dir="${2:-}"; shift 2 ;;
++    --marketplace) marketplace_dir="${2:-}"; shift 2 ;;
++    --local) local_dir="${2:-}"; shift 2 ;;
++    --json-only) json_only=1; shift ;;
++    --metadata-only) metadata_only=1; shift ;;
++    -h|--help) usage; exit 0 ;;
++    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
++  esac
++done
++
++if [[ -n "$local_dir" ]]; then
++  local_dir="$(cd "$local_dir" && pwd)"
++  if [[ -z "$repo_url" && -d "$local_dir/.git" ]]; then
++    repo_url="$(git -C "$local_dir" remote get-url origin 2>/dev/null || true)"
++    repo_url="${repo_url%.git}"
++    repo_url="${repo_url/#git@github.com:/https://github.com/}"
++  fi
++  if [[ -z "$commit_sha" && -d "$local_dir/.git" ]]; then
++    commit_sha="$(git -C "$local_dir" rev-parse HEAD)"
++  fi
++fi
++
++if [[ -z "$repo_url" || -z "$commit_sha" ]]; then
++  echo "Both --repo and --sha are required (or infer them with --local)." >&2
++  exit 2
++fi
++
++if [[ ! "$repo_url" =~ ^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
++  echo "Repository URL must be https://github.com/owner/name" >&2
++  exit 2
++fi
++
++if [[ "$commit_sha" == HEAD || ${#commit_sha} -ne 40 ]]; then
++  if [[ -n "$local_dir" && -d "$local_dir/.git" ]]; then
++    commit_sha="$(git -C "$local_dir" rev-parse "$commit_sha")"
++  fi
++fi
++if [[ ! "$commit_sha" =~ ^[0-9a-f]{40}$ ]]; then
++  echo "commitSha must be a full 40-character lowercase SHA." >&2
++  exit 2
++fi
++
++repository="${repo_url#https://github.com/}"
++if [[ -z "$out_dir" ]]; then
++  out_dir="${TMPDIR:-/tmp}/omarchy-security-baseline/${repository//\//-}-${commit_sha:0:12}"
++fi
++mkdir -p "$out_dir"
++out_dir="$(cd "$out_dir" && pwd)"
++
++if [[ -n "$local_dir" && -f "$local_dir/manifest.json" ]]; then
++  manifest_path="$local_dir/manifest.json"
++else
++  manifest_path="$out_dir/manifest.json"
++  curl -fsSL "https://raw.githubusercontent.com/${repository}/${commit_sha}/manifest.json" \
++    -o "$manifest_path"
++fi
++
++eval "$(python3 - "$manifest_path" "$plugin_id" <<'PY'
++import json, shlex, sys
++from pathlib import Path
++manifest = json.loads(Path(sys.argv[1]).read_text())
++plugin_id = sys.argv[2] or manifest.get("id")
++entry_points = manifest.get("entryPoints") or {}
++if not plugin_id or not isinstance(entry_points, dict) or not entry_points:
++    raise SystemExit("Root manifest.json must have id and object entryPoints")
++print(f"plugin_id={shlex.quote(str(plugin_id))}")
++print(f"entry_points_json={shlex.quote(json.dumps(entry_points, separators=(',', ':')))}")
++PY
++)"
++
++# Official writeValidationMetadata fields (schemaVersion 1), plus entryPoints
++# on each listedPlugins row so a local rerun matches both the bot JSON and the
++# commit's root manifest.
++python3 - "$out_dir/validation-metadata.json" "$repo_url" "$repository" "$commit_sha" "$plugin_id" "$entry_points_json" <<'PY'
++import json, sys
++from pathlib import Path
++entry_points = json.loads(sys.argv[6])
++metadata = {
++    "schemaVersion": 1,
++    "repoUrl": sys.argv[2],
++    "repository": sys.argv[3],
++    "commitSha": sys.argv[4],
++    "pluginIds": [sys.argv[5]],
++    "listedPlugins": [{
++        "pluginId": sys.argv[5],
++        "manifestPathHint": "manifest.json",
++        "entryPoints": entry_points,
++    }],
++    "entryPoints": sorted(entry_points.values()),
++}
++Path(sys.argv[1]).write_text(json.dumps(metadata, indent=2) + "\n")
++PY
++
++if [[ "$metadata_only" -eq 1 ]]; then
++  printf '%s\n' "$out_dir/validation-metadata.json"
++  exit 0
++fi
++
++if [[ -z "$marketplace_dir" ]]; then
++  marketplace_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-plugin-marketplace"
++fi
++if [[ ! -f "$marketplace_dir/scripts/security-baseline.mjs" ]]; then
++  mkdir -p "$(dirname "$marketplace_dir")"
++  if [[ -d "$marketplace_dir/.git" ]]; then
++    git -C "$marketplace_dir" pull --ff-only --depth 1
++  else
++    git clone --depth 1 https://github.com/omacom/omarchy-plugin-marketplace.git "$marketplace_dir"
++  fi
++fi
++
++report="$out_dir/security-baseline-report.md"
++json="$out_dir/security-baseline.json"
++set +e
++(
++  cd "$marketplace_dir"
++  node scripts/security-baseline.mjs \
++    --metadata="$out_dir/validation-metadata.json" \
++    --json="$json"
++) > "$report"
++status=$?
++set -e
++
++if [[ "$json_only" -eq 1 ]]; then
++  printf '%s\n' "$json"
++else
++  cat "$report"
++  echo
++  echo "metadata: $out_dir/validation-metadata.json"
++  echo "report:   $report"
++  echo "json:     $json"
++  echo "exit:     $status"
++fi
++exit "$status"
+diff --git a/tests/fixtures/sample-plugin/manifest.json b/tests/fixtures/sample-plugin/manifest.json
+new file mode 100644
+index 0000000..3e5465f
+--- /dev/null
++++ b/tests/fixtures/sample-plugin/manifest.json
+@@ -0,0 +1,9 @@
++{
++  "schemaVersion": 1,
++  "id": "example.plugin",
++  "name": "Example Plugin",
++  "version": "1.0.0",
++  "entryPoints": {
++    "overlay": "Launcher.qml"
++  }
++}
+diff --git a/tests/test_security_baseline_runner.py b/tests/test_security_baseline_runner.py
+new file mode 100644
+index 0000000..7765651
+--- /dev/null
++++ b/tests/test_security_baseline_runner.py
+@@ -0,0 +1,53 @@
++"""Local marketplace baseline runner: metadata matches the bot schema."""
++import json
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++ROOT = Path(__file__).resolve().parents[1]
++RUNNER = ROOT / "scripts/run-marketplace-security-baseline.sh"
++FIXTURE = ROOT / "tests/fixtures/sample-plugin"
++
++
++class SecurityBaselineRunnerTests(unittest.TestCase):
++    def test_help_exits_cleanly(self):
++        result = subprocess.run(["bash", str(RUNNER), "--help"], capture_output=True, text=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("--metadata-only", result.stdout)
++
++    def test_metadata_only_matches_official_schema_and_root_manifest(self):
++        manifest = json.loads((FIXTURE / "manifest.json").read_text())
++        sha = "aab69655c08c9d0e0769be854bd44f58b4c59aac"
++        with tempfile.TemporaryDirectory() as directory:
++            result = subprocess.run(
++                [
++                    "bash", str(RUNNER),
++                    "--local", str(FIXTURE),
++                    "--repo", "https://github.com/example/sample-plugin",
++                    "--sha", sha,
++                    "--out", directory,
++                    "--metadata-only",
++                ],
++                capture_output=True,
++                text=True,
++                check=True,
++            )
++            path = Path(result.stdout.strip())
++            metadata = json.loads(path.read_text())
++        self.assertEqual(metadata["schemaVersion"], 1)
++        self.assertEqual(metadata["repoUrl"], "https://github.com/example/sample-plugin")
++        self.assertEqual(metadata["repository"], "example/sample-plugin")
++        self.assertEqual(metadata["commitSha"], sha)
++        self.assertEqual(metadata["pluginIds"], [manifest["id"]])
++        self.assertEqual(metadata["listedPlugins"], [{
++            "pluginId": manifest["id"],
++            "manifestPathHint": "manifest.json",
++            "entryPoints": manifest["entryPoints"],
++        }])
++        self.assertEqual(metadata["entryPoints"], sorted(manifest["entryPoints"].values()))
++
++    def test_missing_repo_or_sha_exits_invalid(self):
++        result = subprocess.run(["bash", str(RUNNER)], capture_output=True, text=True)
++        self.assertEqual(result.returncode, 2)
++        self.assertIn("--repo", result.stderr)
+-- 
+2.43.0
+
