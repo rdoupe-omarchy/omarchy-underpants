@@ -137,4 +137,4 @@ python3 scripts/package.py
 
 Unpack into a new directory and run `bash install.sh`. To remove the plugin, run `omarchy plugin remove douper.underpants` and remove only its two optional menu entries.
 
-See [TESTING.md](TESTING.md) for verification, [PUBLISHING.md](PUBLISHING.md) for the approval checklist, and [CHANGELOG.md](CHANGELOG.md) for the candidate release notes. The stock Omarchy wordmark is credited to David Heinemeier Hansson in [LICENSE](LICENSE); sprites and renderer additions are by douper. This is an independent community joke, not an official Omarchy product or endorsement.
+See [TESTING.md](TESTING.md) for verification, [PUBLISHING.md](PUBLISHING.md) for the approval checklist, [RUN-BASELINE.md](RUN-BASELINE.md) to replay the marketplace Automated Security Baseline, and [CHANGELOG.md](CHANGELOG.md) for the candidate release notes. The stock Omarchy wordmark is credited to David Heinemeier Hansson in [LICENSE](LICENSE); sprites and renderer additions are by douper. This is an independent community joke, not an official Omarchy product or endorsement.

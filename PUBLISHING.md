@@ -33,7 +33,7 @@ The local Claude Omarchy skill points to the same installed Omarchy skill used b
 - [x] Capture and inspect clean current previews: root `preview.png` for Story and `assets/zen.png` for Zen. Other development screenshots remain excluded.
 - [ ] Select the repository URL, then document its exact standard `omarchy plugin add <url> --enable` command in README.
 - [ ] Owner approves the local repository contents, initial commit and release tag before any Git operations that publish them.
-- [ ] After publication, verify the public repository and exact commit through the marketplace's validation and security-baseline workflow. These checks cannot be claimed for an unpublished directory.
+- [ ] After publication, verify the public repository and exact commit through the marketplace's validation and security-baseline workflow. These checks cannot be claimed for an unpublished directory. Replay the same bot CLI locally with [RUN-BASELINE.md](RUN-BASELINE.md).
 - [ ] Show the completed marketplace title/body to the owner. Obtain confirmation of all five checklist statements and explicit issue-submission approval.
 
 Use the exact submission headings from SUBMISSION.md. Leave unconfirmed checklist statements unchecked in a local draft. Never claim a public repository exists before it does. Listing approval is not a security review.
