@@ -58,55 +58,32 @@ For two separate menu entries, merge the entries from `menu-entries.json` into y
 }
 ```
 
-Enabling the plugin makes Story and Zen available on demand (menu / `omarchy-shell shell summon`). It does **not** by itself replace Omarchy’s stock idle screensaver or change lock timings. To wire Underpants as what idle launches, see [Use as the default idle screensaver](#use-as-the-default-idle-screensaver) below — a community PATH override, not a first-class Omarchy plugin API.
+Enabling the plugin makes Story and Zen available on demand (menu / `omarchy-shell shell summon`). It does **not** by itself replace Omarchy’s stock idle screensaver or change lock timings. To run Underpants from idle or a keybind, see [Use as the default idle screensaver](#use-as-the-default-idle-screensaver) below — a fixed absolute launcher, not a `PATH` override.
 
 ## Use as the default idle screensaver
 
-Omarchy’s idle service runs `bash -lc` → `omarchy-launch-screensaver`. The stock launcher opens one terminal per monitor with `-e omarchy-screensaver` (ttfx). There is **no** official selectable idle-screensaver plugin API; the supported community approach is to put a wrapper named `omarchy-launch-screensaver` earlier on `PATH` than `/usr/bin/omarchy-launch-screensaver`.
-
-**Important:** Omarchy’s `env-bootstrap` **appends** `~/.local/bin` at the end of `PATH`. A wrapper there does **not** beat the stock binary unless you **prepend** `~/.local/bin` for login shells (idle uses `bash -lc`).
+Omarchy’s idle service runs `bash -lc` and then the stock `omarchy-launch-screensaver` **by command name**. There is no first-class plugin API for replacing that command. Selecting a community wrapper by mutating login `PATH` would also let any earlier shadow executable run on the idle path, so this plugin does **not** ask you to prepend directories onto `PATH`.
 
 1. Install and enable the plugin first (`bash install.sh --enable`, or `omarchy plugin add … --enable`).
-2. Install the idle wrapper with the helper in step 2b (refuses an unexpected existing name; does not `cat >` a pathname). The wrapper payload is:
-
-```bash
-#!/bin/bash
-# Community PATH override: launch Underpants Gnomes instead of stock ttfx.
-# Matches stock early-exit behaviour; does not change lock timings.
-
-pgrep -f '[o]rg.omarchy.screensaver' >/dev/null && exit 0
-
-if omarchy-toggle-enabled screensaver-off && [[ ${1:-} != "force" ]]; then
-  exit 1
-fi
-
-exec python3 "$HOME/.config/omarchy/plugins/douper.underpants/screensaver.py" \
-  --launch --mode "${UNDERPANTS_MODE:-story}"
-```
-
-2b. Optional helper (descriptor-safe write of the same wrapper; does **not** edit your shell rc; refuses if the wrapper name already exists):
+2. Install the fixed-path idle launcher (descriptor-safe write; refuses an unexpected existing name; does **not** edit your shell rc):
 
 ```bash
 bash scripts/install-default-screensaver.sh
 ```
 
-3. Prepend `~/.local/bin` for login shells so idle’s `bash -lc` sees the wrapper first. After Omarchy sources its env (e.g. near the end of `~/.bashrc`):
+This writes `$HOME/.local/bin/underpants-launch-screensaver` with trusted absolute `pgrep`, `omarchy-toggle-enabled`, and `python3` identities, a baked-in screensaver path, and a minimal closed environment. It is a different name from the stock launcher on purpose, so it cannot be selected by a mutable `PATH`.
+
+3. Point a keybind or user idle hook at that **exact absolute path**. Do not export a `PATH` override to intercept `/usr/bin/omarchy-launch-screensaver`. Test with:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+"$HOME/.local/bin/underpants-launch-screensaver" force
 ```
 
-4. Re-login or restart the shell session so `bash -lc` picks up the new `PATH`.
-5. Test:
+If you also want to stop the stock idle ttfx from launching, turn the idle screensaver off (`omarchy toggle screensaver`) and keep your hook pointed at the Underpants launcher. Official idle still invokes the stock command by name; this plugin does not change lock timings.
 
-```bash
-omarchy-launch-screensaver force
-# and/or System → Screensaver; also wait idle.screensaver seconds with idle enabled
-```
+Optional: default to Zen with `UNDERPANTS_MODE=zen` in the environment that starts the launcher.
 
-Optional: default to Zen with `export UNDERPANTS_MODE=zen` in the same rc (or set it only for the wrapper environment).
-
-**Undo:** remove `~/.local/bin/omarchy-launch-screensaver`; remove the `PATH` prepend if you added it only for this. Stock ttfx returns. This override does not change lock timings.
+**Undo:** remove `$HOME/.local/bin/underpants-launch-screensaver`. Stock ttfx is unchanged unless you turned it off separately.
 
 ## Preview and checks
 
@@ -123,7 +100,7 @@ For private GUI testing, sync the project with `agent-desktop sync` before launc
 
 ## Distribution
 
-Version 2.0.1 documents wiring Underpants as the default idle screensaver via a PATH override. Version 2.0.0 bundled both modes under the same MIT-licensed manifest. The directory is ready to be the root of an Omarchy plugin repository; after publishing it, users can install its Git URL with `omarchy plugin add https://github.com/rdoupe-omarchy/omarchy-underpants --enable`. Standard Git installation needs no custom install hook. No public repository is assumed or created by the local installer.
+Version 2.0.1 documents a fixed-path idle launcher with trusted absolute tool identities. Version 2.0.0 bundled both modes under the same MIT-licensed manifest. The directory is ready to be the root of an Omarchy plugin repository; after publishing it, users can install its Git URL with `omarchy plugin add https://github.com/rdoupe-omarchy/omarchy-underpants --enable`. Standard Git installation needs no custom install hook. No public repository is assumed or created by the local installer.
 
 To build a local release archive from this directory:
 

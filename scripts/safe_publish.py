@@ -17,6 +17,7 @@ import fcntl
 import os
 from pathlib import Path
 import secrets
+import shlex
 import stat
 import subprocess
 import sys
@@ -25,7 +26,7 @@ PLUGIN_ID = "douper.underpants"
 PLUGIN_FILES = (
     "manifest.json", "Launcher.qml", "screensaver.py", "README.md", "LICENSE", "menu-entries.json",
 )
-WRAPPER_NAME = "omarchy-launch-screensaver"
+WRAPPER_NAME = "underpants-launch-screensaver"
 WRAPPER_REL = Path(".local") / "bin" / WRAPPER_NAME
 PLUGIN_REL = Path(".config") / "omarchy" / "plugins" / PLUGIN_ID
 PLUGIN_PY_REL = PLUGIN_REL / "screensaver.py"
@@ -37,19 +38,13 @@ FILE_CREATE_FLAGS = (
 )
 FILE_PROBE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 RENAME_NOREPLACE = 1
-WRAPPER_PAYLOAD = """#!/bin/bash
-# Community PATH override: launch Underpants Gnomes instead of stock ttfx.
-# Matches stock early-exit behaviour; does not change lock timings.
-
-pgrep -f '[o]rg.omarchy.screensaver' >/dev/null && exit 0
-
-if omarchy-toggle-enabled screensaver-off && [[ ${1:-} != "force" ]]; then
-  exit 1
-fi
-
-exec python3 "$HOME/.config/omarchy/plugins/douper.underpants/screensaver.py" \\
-  --launch --mode "${UNDERPANTS_MODE:-story}"
-"""
+DEFAULT_TRUSTED_PATH = "/usr/bin:/bin"
+WRAPPER_TOOLS = ("pgrep", "omarchy-toggle-enabled", "python3", "env")
+SESSION_ENV_KEYS = (
+    "USER", "LOGNAME", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE", "XDG_SESSION_ID",
+    "XDG_CONFIG_HOME", "WAYLAND_DISPLAY", "DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE", "OMARCHY_PATH", "DBUS_SESSION_BUS_ADDRESS",
+)
 
 
 class PublishError(RuntimeError):
@@ -58,6 +53,118 @@ class PublishError(RuntimeError):
     def __init__(self, message, status=1):
         super().__init__(message)
         self.status = status
+
+
+def trusted_path_dirs():
+    extra = os.environ.get("UNDERPANTS_TRUSTED_PATH", "")
+    raw = f"{extra}{os.pathsep}{DEFAULT_TRUSTED_PATH}" if extra else DEFAULT_TRUSTED_PATH
+    dirs = []
+    seen = set()
+    for part in raw.split(os.pathsep):
+        if not part or not os.path.isabs(part) or ".." in Path(part).parts:
+            continue
+        if part not in seen:
+            seen.add(part)
+            dirs.append(part)
+    return dirs or ["/usr/bin", "/bin"]
+
+
+def trusted_path_string():
+    return os.pathsep.join(trusted_path_dirs())
+
+
+def _is_trusted_real(real, dirs=None):
+    for directory in dirs or trusted_path_dirs():
+        if real == directory or real.startswith(directory + os.sep):
+            return True
+    return False
+
+
+def resolve_trusted_exec(name):
+    """Return an allowlisted absolute executable. Never search ambient PATH."""
+    if not name or name in (".", "..") or os.sep in name:
+        raise PublishError(f"Refusing unsafe tool name {name}.")
+    dirs = trusted_path_dirs()
+    for directory in dirs:
+        candidate = os.path.join(directory, name)
+        try:
+            if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+                continue
+            real = os.path.realpath(candidate)
+        except OSError:
+            continue
+        if _is_trusted_real(real, dirs):
+            return candidate
+    raise PublishError(
+        f"Refusing to proceed without a trusted {name} (searched {trusted_path_string()})."
+    )
+
+
+def closed_env(*, session=False):
+    env = {
+        "PATH": trusted_path_string(),
+        "HOME": os.environ.get("HOME", ""),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+    }
+    for key, value in os.environ.items():
+        if key.startswith("UNDERPANTS_"):
+            env[key] = value
+    if session:
+        for key in SESSION_ENV_KEYS:
+            value = os.environ.get(key)
+            if value:
+                env[key] = value
+    return env
+
+
+def default_validator():
+    return (resolve_trusted_exec("omarchy"), "plugin", "validate")
+
+
+def wrapper_payload(*, pgrep, toggle, python3, env, screensaver):
+    """Generate the idle launcher with install-time absolute tool identities."""
+    return f"""#!/bin/bash
+# Fixed-path Underpants idle launcher. Tools are pinned; environment is closed.
+# Does not participate in PATH-based omarchy-launch-screensaver selection.
+set -euo pipefail
+
+pgrep={shlex.quote(pgrep)}
+toggle={shlex.quote(toggle)}
+python3={shlex.quote(python3)}
+env={shlex.quote(env)}
+screensaver={shlex.quote(screensaver)}
+
+"$pgrep" -f '[o]rg.omarchy.screensaver' >/dev/null && exit 0
+
+if "$toggle" screensaver-off && [[ ${{1:-}} != "force" ]]; then
+  exit 1
+fi
+
+closed=(PATH=/usr/bin:/bin "HOME=$HOME")
+[[ -n ${{USER-}} ]] && closed+=("USER=$USER")
+[[ -n ${{LOGNAME-}} ]] && closed+=("LOGNAME=$LOGNAME")
+[[ -n ${{LANG-}} ]] && closed+=("LANG=$LANG")
+[[ -n ${{XDG_RUNTIME_DIR-}} ]] && closed+=("XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
+[[ -n ${{XDG_SESSION_TYPE-}} ]] && closed+=("XDG_SESSION_TYPE=$XDG_SESSION_TYPE")
+[[ -n ${{XDG_SESSION_ID-}} ]] && closed+=("XDG_SESSION_ID=$XDG_SESSION_ID")
+[[ -n ${{WAYLAND_DISPLAY-}} ]] && closed+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+[[ -n ${{DISPLAY-}} ]] && closed+=("DISPLAY=$DISPLAY")
+[[ -n ${{HYPRLAND_INSTANCE_SIGNATURE-}} ]] && closed+=("HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE")
+[[ -n ${{OMARCHY_PATH-}} ]] && closed+=("OMARCHY_PATH=$OMARCHY_PATH")
+[[ -n ${{UNDERPANTS_MODE-}} ]] && closed+=("UNDERPANTS_MODE=$UNDERPANTS_MODE")
+
+exec "$env" -i "${{closed[@]}}" "$python3" "$screensaver" \\
+  --launch --mode "${{UNDERPANTS_MODE:-story}}"
+"""
+
+
+def resolve_wrapper_tools():
+    return {
+        "pgrep": resolve_trusted_exec("pgrep"),
+        "toggle": resolve_trusted_exec("omarchy-toggle-enabled"),
+        "python3": resolve_trusted_exec("python3"),
+        "env": resolve_trusted_exec("env"),
+    }
 
 
 def require_nofollow_support():
@@ -457,7 +564,9 @@ def _validate_plugin_fd(plugin_fd, validator):
     # Child /proc/self is the validator, not this process. The parent pid fd
     # still names the inode we hold.
     path = f"/proc/{os.getpid()}/fd/{plugin_fd}"
-    result = subprocess.run([*validator, path], capture_output=True, text=True)
+    result = subprocess.run(
+        [*validator, path], capture_output=True, text=True, env=closed_env(),
+    )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "validator failed").strip()
         raise PublishError(detail or "Plugin validation failed.")
@@ -474,8 +583,10 @@ def _has_git(plugin_fd):
     return True
 
 
-def publish_plugin(source_dir, home, *, force=False, validator=("omarchy", "plugin", "validate")):
+def publish_plugin(source_dir, home, *, force=False, validator=None):
     source_dir = str(Path(source_dir))
+    if validator is None:
+        validator = default_validator()
     files = _read_source_files(source_dir)
     home_path, home_names, home_fd = open_home(home)
     plugins_rel = PLUGIN_REL.parent
@@ -583,10 +694,14 @@ def require_installed_plugin(home):
         os.close(home_fd)
 
 
-def publish_wrapper(home):
+def publish_wrapper(home, *, tools=None):
     require_installed_plugin(home)
-    payload = WRAPPER_PAYLOAD.encode()
     home_path, home_names, home_fd = open_home(home)
+    tools = dict(tools or resolve_wrapper_tools())
+    screensaver = str(Path(home_path) / PLUGIN_PY_REL)
+    if not os.path.isabs(screensaver):
+        raise PublishError("Refusing a non-absolute screensaver path.")
+    payload = wrapper_payload(screensaver=screensaver, **tools).encode()
     bin_fd = None
     try:
         bin_fd = _ensure_under_home(home_fd, home_names, WRAPPER_REL.parent)
@@ -603,7 +718,7 @@ def _parse_args(argv):
     plugin.add_argument("--source", required=True)
     plugin.add_argument("--home", required=True)
     plugin.add_argument("--force", action="store_true")
-    plugin.add_argument("--validator", nargs="+", default=["omarchy", "plugin", "validate"])
+    plugin.add_argument("--validator", nargs="+", default=None)
     wrapper = sub.add_parser("install-wrapper")
     wrapper.add_argument("--home", required=True)
     return parser.parse_args(argv)
@@ -613,8 +728,9 @@ def main(argv=None):
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     try:
         if args.command == "install-plugin":
+            validator = tuple(args.validator) if args.validator is not None else None
             _, message = publish_plugin(
-                args.source, args.home, force=args.force, validator=tuple(args.validator),
+                args.source, args.home, force=args.force, validator=validator,
             )
             if message:
                 print(message)

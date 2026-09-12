@@ -23,12 +23,20 @@ class InstallerTests(unittest.TestCase):
             dest = self.bin / name
             shutil.copyfile(ROOT / "tests/fixtures" / name, dest)
             dest.chmod(0o755)
+        self.shadow = self.tmp / "shadow"
+        self.shadow.mkdir()
+        for name in ("omarchy", "omarchy-shell", "python3"):
+            dest = self.shadow / name
+            dest.write_text('#!/bin/bash\nprintf "SHADOW %s\\n" "$0" >> "$UNDERPANTS_TEST_LOG"\nexit 42\n')
+            dest.chmod(0o755)
         self.env = os.environ.copy()
         # Fixture home only; never invoke the real shell IPC or user installer.
+        # Ambient PATH is poisoned; only the allowlisted trusted bin is used.
         self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.tmp / "unused-config"),
                         UNDERPANTS_TEST_LOG=str(self.tmp / "calls"),
                         UNDERPANTS_TEST_VALIDATOR=VALIDATOR,
-                        PATH=str(self.bin) + os.pathsep + self.env["PATH"])
+                        UNDERPANTS_TRUSTED_PATH=str(self.bin),
+                        PATH=str(self.shadow) + os.pathsep + str(self.bin) + os.pathsep + self.env["PATH"])
 
     def install(self, *args):
         return subprocess.run(["bash", str(ROOT / "install.sh"), *args], env=self.env,
@@ -42,8 +50,20 @@ class InstallerTests(unittest.TestCase):
         calls = (self.tmp / "calls").read_text()
         self.assertNotIn("enable", calls)
         self.assertNotIn("rescanPlugins", calls)
+        self.assertNotIn("SHADOW", calls)
         self.assertFalse((self.tmp / "unused-config").exists())
         self.assertFalse((self.home / ".config/omarchy/shell.json").exists())
+
+    def test_missing_trusted_omarchy_fails_closed_and_ignores_path_shadow(self):
+        env = self.env.copy()
+        env.pop("UNDERPANTS_TRUSTED_PATH", None)
+        result = subprocess.run(["bash", str(ROOT / "install.sh")], env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trusted omarchy", result.stderr)
+        self.assertFalse(self.target.exists())
+        log = self.tmp / "calls"
+        self.assertFalse(log.exists() and "SHADOW" in log.read_text())
 
     def test_reinstall_requires_consent_and_makes_backup(self):
         self.assertEqual(self.install().returncode, 0)
