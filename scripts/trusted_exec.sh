@@ -96,7 +96,10 @@ underpants_run() {
   local var
   while IFS= read -r var; do
     [[ -n $var ]] || continue
-    [[ $var == UNDERPANTS_TRUSTED_PATH ]] && continue
+    case "$var" in
+      UNDERPANTS_TRUSTED_PATH|UNDERPANTS_EXTRA_TRUSTED_DIRS|UNDERPANTS_DEFAULT_TRUSTED_PATH)
+        continue ;;
+    esac
     env_args+=("$var=${!var}")
   done < <(compgen -v UNDERPANTS_ || true)
   if [[ $session == true ]]; then
