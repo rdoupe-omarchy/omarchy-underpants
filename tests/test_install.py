@@ -55,6 +55,8 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.home / ".config/omarchy/shell.json").exists())
 
     def test_missing_trusted_omarchy_fails_closed_and_ignores_path_shadow(self):
+        if any(os.path.isfile(os.path.join(directory, "omarchy")) for directory in ("/usr/bin", "/bin")):
+            self.skipTest("host already has a trusted omarchy")
         env = self.env.copy()
         env.pop("UNDERPANTS_TRUSTED_PATH", None)
         result = subprocess.run(["bash", str(ROOT / "install.sh")], env=env,

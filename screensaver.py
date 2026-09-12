@@ -554,18 +554,92 @@ def animate(args):
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
-def run_capped(argv, *, timeout, env=None):
-    """Run a local helper with a deadline and stdout/stderr ceilings."""
-    result = subprocess.run(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env,
-    )
-    if len(result.stdout) > PRODUCER_STDOUT_MAX or len(result.stderr) > PRODUCER_STDERR_MAX:
+TRUSTED_BIN_DIRS = ("/usr/bin", "/bin")
+
+
+def resolve_session_exec(name):
+    """Return an allowlisted absolute executable. Never search ambient PATH."""
+    if not name or name in (".", "..") or os.sep in name:
+        raise RuntimeError(f"Refusing unsafe tool name {name}.")
+    for directory in TRUSTED_BIN_DIRS:
+        candidate = os.path.join(directory, name)
+        try:
+            if not os.path.lexists(candidate):
+                continue
+            real = os.path.realpath(candidate)
+            if not os.path.isfile(real) or not os.access(real, os.X_OK):
+                continue
+        except OSError:
+            continue
+        if real == directory or real.startswith(directory + os.sep):
+            return real
+    raise RuntimeError(f"Refusing to proceed without a trusted {name}.")
+
+
+def run_capped(argv, *, timeout, env=None, max_stdout=PRODUCER_STDOUT_MAX, max_stderr=PRODUCER_STDERR_MAX):
+    """Run a local helper, killing it as soon as a stream exceeds its ceiling."""
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    stdout = bytearray()
+    stderr = bytearray()
+    streams = {
+        proc.stdout: (stdout, max_stdout),
+        proc.stderr: (stderr, max_stderr),
+    }
+    deadline = time.monotonic() + timeout
+    oversized = False
+    try:
+        while streams:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            ready, _, _ = select.select(list(streams), [], [], remaining)
+            if not ready:
+                if proc.poll() is not None:
+                    ready, _, _ = select.select(list(streams), [], [], 0)
+                    if not ready:
+                        break
+                continue
+            for stream in ready:
+                buf, limit = streams[stream]
+                chunk = os.read(stream.fileno(), 65536)
+                if not chunk:
+                    stream.close()
+                    del streams[stream]
+                    continue
+                buf.extend(chunk)
+                if len(buf) > limit:
+                    oversized = True
+                    if proc.poll() is None:
+                        proc.kill()
+        if proc.poll() is None:
+            remaining = deadline - time.monotonic()
+            try:
+                proc.wait(timeout=max(0.01, remaining))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
+                raise subprocess.TimeoutExpired(argv, timeout)
+    except Exception:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                pass
+        raise
+    finally:
+        for stream in list(streams):
+            try:
+                stream.close()
+            except OSError:
+                pass
+    if oversized:
         raise RuntimeError("Refusing oversized command output.")
-    return result
+    return subprocess.CompletedProcess(argv, proc.returncode, bytes(stdout), bytes(stderr))
 
 
 def hypr(*args, json_output=False):
-    result = run_capped(["hyprctl", *args], timeout=3)
+    result = run_capped([resolve_session_exec("hyprctl"), *args], timeout=3)
     stdout = result.stdout.decode()
     stderr = result.stderr.decode()
     if result.returncode:
@@ -721,10 +795,9 @@ def launch(args):
     monitors = hypr("monitors", "-j", json_output=True)
     if any(c.get("class") == APP_ID for c in hypr("clients", "-j", json_output=True)):
         return
-    if args.terminal:
-        terminal = args.terminal
-    else:
-        listed = run_capped(["xdg-terminal-exec", "--print-id"], timeout=3)
+    terminal = getattr(args, "terminal", None)
+    if not terminal:
+        listed = run_capped([resolve_session_exec("xdg-terminal-exec"), "--print-id"], timeout=3)
         if listed.returncode:
             raise RuntimeError((listed.stderr or listed.stdout).decode().strip() or "xdg-terminal-exec failed")
         terminal = listed.stdout.decode().strip()

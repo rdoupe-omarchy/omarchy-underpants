@@ -17,10 +17,12 @@ import fcntl
 import os
 from pathlib import Path
 import secrets
+import select
 import shlex
 import stat
 import subprocess
 import sys
+import time
 
 PLUGIN_ID = "douper.underpants"
 PLUGIN_FILES = (
@@ -117,6 +119,68 @@ def closed_env(*, session=False):
             if value:
                 env[key] = value
     return env
+
+
+def run_capped(argv, *, timeout, env=None, max_stdout=PRODUCER_STDOUT_MAX, max_stderr=PRODUCER_STDERR_MAX):
+    """Run a helper, killing it as soon as a stream exceeds its ceiling."""
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    stdout = bytearray()
+    stderr = bytearray()
+    streams = {
+        proc.stdout: (stdout, max_stdout),
+        proc.stderr: (stderr, max_stderr),
+    }
+    deadline = time.monotonic() + timeout
+    oversized = False
+    try:
+        while streams:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            ready, _, _ = select.select(list(streams), [], [], remaining)
+            if not ready:
+                if proc.poll() is not None:
+                    ready, _, _ = select.select(list(streams), [], [], 0)
+                    if not ready:
+                        break
+                continue
+            for stream in ready:
+                buf, limit = streams[stream]
+                chunk = os.read(stream.fileno(), 65536)
+                if not chunk:
+                    stream.close()
+                    del streams[stream]
+                    continue
+                buf.extend(chunk)
+                if len(buf) > limit:
+                    oversized = True
+                    if proc.poll() is None:
+                        proc.kill()
+        if proc.poll() is None:
+            remaining = deadline - time.monotonic()
+            try:
+                proc.wait(timeout=max(0.01, remaining))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
+                raise subprocess.TimeoutExpired(argv, timeout)
+    except Exception:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                pass
+        raise
+    finally:
+        for stream in list(streams):
+            try:
+                stream.close()
+            except OSError:
+                pass
+    if oversized:
+        raise RuntimeError("Refusing oversized command output.")
+    return subprocess.CompletedProcess(argv, proc.returncode, bytes(stdout), bytes(stderr))
 
 
 def default_validator():
@@ -567,14 +631,14 @@ def _validate_plugin_fd(plugin_fd, validator):
     # still names the inode we hold.
     path = f"/proc/{os.getpid()}/fd/{plugin_fd}"
     try:
-        result = subprocess.run(
-            [*validator, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=15, env=closed_env(),
+        result = run_capped(
+            [*validator, path], timeout=15, env=closed_env(),
+            max_stdout=PRODUCER_STDOUT_MAX, max_stderr=PRODUCER_STDERR_MAX,
         )
     except subprocess.TimeoutExpired as error:
         raise PublishError("Validator timed out.") from error
-    if len(result.stdout) > PRODUCER_STDOUT_MAX or len(result.stderr) > PRODUCER_STDERR_MAX:
-        raise PublishError("Refusing oversized validator output.")
+    except RuntimeError as error:
+        raise PublishError(str(error)) from error
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or b"validator failed").decode(errors="replace").strip()
         raise PublishError(detail or "Plugin validation failed.")

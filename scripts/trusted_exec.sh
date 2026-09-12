@@ -54,15 +54,12 @@ underpants_resolve() {
   local IFS=':'
   for dir in $(underpants_trusted_path); do
     cand="$dir/$name"
-    if [[ -L $cand ]]; then
+    if [[ -L $cand || -f $cand ]]; then
       real="$(underpants_realpath "$cand")" || continue
       if [[ -f $real && -x $real ]] && underpants_is_trusted_real "$real"; then
-        printf '%s\n' "$cand"
+        printf '%s\n' "$real"
         return 0
       fi
-    elif [[ -f $cand && -x $cand ]]; then
-      printf '%s\n' "$cand"
-      return 0
     fi
   done
   printf 'Refusing to proceed without a trusted %s (searched %s).\n' "$name" "$(underpants_trusted_path)" >&2
