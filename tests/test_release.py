@@ -163,6 +163,11 @@ class ReleaseTests(unittest.TestCase):
                 os.close(fd)
             supervisor.stdout.close()
 
+    def test_run_capped_rejects_oversized_stdout(self):
+        over = saver.PRODUCER_STDOUT_MAX + 1
+        with self.assertRaisesRegex(RuntimeError, "oversized"):
+            saver.run_capped([sys.executable, "-c", f"import sys; sys.stdout.write('x' * {over})"], timeout=5)
+
     def test_lock_open_flags_are_nofollow_exclusive_and_do_not_truncate(self):
         self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_EXCL)
         self.assertTrue(saver.LOCK_CREATE_FLAGS & os.O_NOFOLLOW)
@@ -181,7 +186,9 @@ class ReleaseTests(unittest.TestCase):
             env = {"XDG_RUNTIME_DIR": runtime, "HYPRLAND_INSTANCE_SIGNATURE": "testhipr"}
             with patch.dict(os.environ, env):
                 with saver.session_lock() as state_dir:
-                    self.assertEqual(state_dir, Path(runtime) / saver.RUNTIME_SUBDIR)
+                    private = Path(runtime) / saver.RUNTIME_SUBDIR
+                    self.assertTrue(os.path.samefile(state_dir, private))
+                    self.assertEqual(state_dir, Path("/proc/self/fd") / os.path.basename(state_dir))
                     lock = state_dir / saver.session_lock_name()
                     self.assertTrue(lock.is_file())
                     self.assertFalse(lock.is_symlink())

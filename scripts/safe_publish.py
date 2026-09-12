@@ -39,6 +39,8 @@ FILE_CREATE_FLAGS = (
 FILE_PROBE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 RENAME_NOREPLACE = 1
 DEFAULT_TRUSTED_PATH = "/usr/bin:/bin"
+PRODUCER_STDOUT_MAX = 2 * 1024 * 1024
+PRODUCER_STDERR_MAX = 64 * 1024
 WRAPPER_TOOLS = ("pgrep", "omarchy-toggle-enabled", "python3", "env")
 SESSION_ENV_KEYS = (
     "USER", "LOGNAME", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE", "XDG_SESSION_ID",
@@ -565,10 +567,13 @@ def _validate_plugin_fd(plugin_fd, validator):
     # still names the inode we hold.
     path = f"/proc/{os.getpid()}/fd/{plugin_fd}"
     result = subprocess.run(
-        [*validator, path], capture_output=True, text=True, env=closed_env(),
+        [*validator, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=15, env=closed_env(),
     )
+    if len(result.stdout) > PRODUCER_STDOUT_MAX or len(result.stderr) > PRODUCER_STDERR_MAX:
+        raise PublishError("Refusing oversized validator output.")
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "validator failed").strip()
+        detail = (result.stderr or result.stdout or b"validator failed").decode(errors="replace").strip()
         raise PublishError(detail or "Plugin validation failed.")
 
 

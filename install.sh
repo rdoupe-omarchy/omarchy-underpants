@@ -38,13 +38,14 @@ if [[ $enable == "true" ]]; then
   omarchy_shell="$(underpants_resolve omarchy-shell)"
   jq="$(underpants_resolve jq)"
   underpants_run --session "$omarchy_shell" shell rescanPlugins
+  sleep_bin="$(underpants_resolve sleep)"
   discovered=false
   for (( attempt = 0; attempt < 40; attempt++ )); do
     if underpants_run --session "$omarchy" plugin list --json | underpants_run "$jq" -e 'any(.[]; .id == "douper.underpants")' >/dev/null; then
       discovered=true
       break
     fi
-    sleep 0.05
+    "$sleep_bin" 0.05
   done
   if [[ $discovered != "true" ]]; then
     printf '%s\n' 'Files installed, but shell discovery timed out. Rescan and enable when the shell is ready.' >&2

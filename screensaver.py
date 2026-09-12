@@ -22,6 +22,8 @@ import tty
 
 APP_ID = "org.omarchy.screensaver"
 RUNTIME_SUBDIR = "douper.underpants"
+PRODUCER_STDOUT_MAX = 2 * 1024 * 1024
+PRODUCER_STDERR_MAX = 64 * 1024
 DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 LOCK_CREATE_FLAGS = (
     os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
@@ -552,11 +554,23 @@ def animate(args):
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
+def run_capped(argv, *, timeout, env=None):
+    """Run a local helper with a deadline and stdout/stderr ceilings."""
+    result = subprocess.run(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, env=env,
+    )
+    if len(result.stdout) > PRODUCER_STDOUT_MAX or len(result.stderr) > PRODUCER_STDERR_MAX:
+        raise RuntimeError("Refusing oversized command output.")
+    return result
+
+
 def hypr(*args, json_output=False):
-    result = subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=3)
+    result = run_capped(["hyprctl", *args], timeout=3)
+    stdout = result.stdout.decode()
+    stderr = result.stderr.decode()
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-    return json.loads(result.stdout) if json_output else result.stdout
+        raise RuntimeError(stderr.strip() or stdout.strip())
+    return json.loads(stdout) if json_output else stdout
 
 
 def focus_monitor(name):
@@ -695,7 +709,8 @@ def session_lock():
             yield None
             return
         _require_private_lock(lock_fd)
-        yield Path(runtime) / RUNTIME_SUBDIR
+        # Hold the private-dir inode, not a pathname a same-UID swap can retarget.
+        yield Path("/proc/self/fd") / str(private_fd)
     finally:
         for fd in (lock_fd, private_fd, runtime_fd):
             if fd is not None:
@@ -706,7 +721,13 @@ def launch(args):
     monitors = hypr("monitors", "-j", json_output=True)
     if any(c.get("class") == APP_ID for c in hypr("clients", "-j", json_output=True)):
         return
-    terminal = args.terminal or subprocess.check_output(["xdg-terminal-exec", "--print-id"], text=True).strip()
+    if args.terminal:
+        terminal = args.terminal
+    else:
+        listed = run_capped(["xdg-terminal-exec", "--print-id"], timeout=3)
+        if listed.returncode:
+            raise RuntimeError((listed.stderr or listed.stdout).decode().strip() or "xdg-terminal-exec failed")
+        terminal = listed.stdout.decode().strip()
     original = next((m["name"] for m in monitors if m.get("focused")), None)
     children = []
     with session_lock() as state_dir:

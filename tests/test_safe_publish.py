@@ -66,6 +66,10 @@ class SafePublishTests(unittest.TestCase):
             self.assertNotIn("dirname", text)
             self.assertNotIn("\ncat ", text)
             self.assertNotIn("readlink", text)
+            self.assertNotIn("\nsleep ", text)
+        qml = (ROOT / "Launcher.qml").read_text()
+        self.assertIn('"/usr/bin/python3"', qml)
+        self.assertNotIn('["python3"', qml)
 
     def test_open_flags_are_nofollow_exclusive_and_do_not_truncate(self):
         self.assertTrue(safe.DIR_OPEN_FLAGS & os.O_NOFOLLOW)

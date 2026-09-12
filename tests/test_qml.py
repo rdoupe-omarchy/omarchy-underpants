@@ -17,7 +17,9 @@ class QmlTests(unittest.TestCase):
             shutil.copyfile(ROOT / "tests/fixtures/python3", fake)
             fake.chmod(0o755)
             shutil.copyfile(ROOT / "tests/LauncherTest.qml", tmp / "LauncherTest.qml")
-            shutil.copyfile(ROOT / "Launcher.qml", tmp / "Launcher.qml")
+            launcher = (tmp / "Launcher.qml")
+            shutil.copyfile(ROOT / "Launcher.qml", launcher)
+            launcher.write_text(launcher.read_text().replace('"/usr/bin/python3"', '"' + str(fake) + '"'))
             env = os.environ.copy()
             for key in ("WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS"):
                 env.pop(key, None)

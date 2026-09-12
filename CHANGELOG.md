@@ -4,7 +4,8 @@
 
 - Document a fixed-path idle launcher (`~/.local/bin/underpants-launch-screensaver`) instead of a login-shell PATH override.
 - Optional `scripts/install-default-screensaver.sh` writes that launcher, prints its absolute path, and reports a leftover `omarchy-launch-screensaver` PATH-override wrapper (does not edit shell rc or PATH).
-- Resolve installer and wrapper tools from an allowlisted absolute directory list (`/usr/bin:/bin`) with a minimal closed environment; never search ambient PATH for `python3`, `omarchy`, `pgrep`, or `omarchy-toggle-enabled`.
+- Resolve installer and wrapper tools from an allowlisted absolute directory list (`/usr/bin:/bin`) with a minimal closed environment; never search ambient PATH for `python3`, `omarchy`, `pgrep`, `sleep`, or `omarchy-toggle-enabled`.
+- Overlay QML launches `/usr/bin/python3` rather than a PATH-selected interpreter. Session stop files are created under the held runtime-directory fd. Local helper output is size-capped.
 - Create the session lock in a verified private XDG runtime subdirectory with no-follow/exclusive descriptor-safe open, owner/type/link checks, and no symlink truncation.
 - Publish optional installer writes through held parent fds: exclusive no-follow temps, staged-payload checks, and atomic rename. Refuse unexpected existing wrapper/plugin names instead of truncating through a symlink.
 
