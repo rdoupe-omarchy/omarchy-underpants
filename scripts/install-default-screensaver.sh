@@ -10,8 +10,31 @@ else
 fi
 # shellcheck source=trusted_exec.sh
 source "$here/trusted_exec.sh"
+trusted_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --trusted-path)
+      if [[ $# -lt 2 ]]; then
+        printf 'Missing directory for --trusted-path\n' >&2
+        exit 2
+      fi
+      underpants_add_trusted_dir "$2" || exit 2
+      trusted_args+=(--trusted-path "$2")
+      shift 2
+      ;;
+    --trusted-path=*)
+      underpants_add_trusted_dir "${1#--trusted-path=}" || exit 2
+      trusted_args+=(--trusted-path "${1#--trusted-path=}")
+      shift
+      ;;
+    --help|-h)
+      printf '%s\n' 'Usage: bash scripts/install-default-screensaver.sh'
+      exit 0 ;;
+    *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
 python3="$(underpants_resolve python3)"
-underpants_run "$python3" "$here/safe_publish.py" install-wrapper --home "$HOME"
+underpants_run "$python3" "$here/safe_publish.py" install-wrapper --home "$HOME" "${trusted_args[@]}"
 
 wrapper="$HOME/.local/bin/underpants-launch-screensaver"
 legacy="$HOME/.local/bin/omarchy-launch-screensaver"

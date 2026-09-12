@@ -3,14 +3,28 @@
 # shellcheck shell=bash
 
 UNDERPANTS_DEFAULT_TRUSTED_PATH="/usr/bin:/bin"
+UNDERPANTS_EXTRA_TRUSTED_DIRS=()
+
+underpants_add_trusted_dir() {
+  local dir="$1"
+  if [[ $dir != /* || $dir == *..* ]]; then
+    printf 'Refusing untrusted directory: %s\n' "$dir" >&2
+    return 1
+  fi
+  UNDERPANTS_EXTRA_TRUSTED_DIRS+=("$dir")
+}
 
 underpants_trusted_path() {
-  local extra="${UNDERPANTS_TRUSTED_PATH:-}"
   local path="$UNDERPANTS_DEFAULT_TRUSTED_PATH"
+  local dir extra="" out=""
+  for dir in "${UNDERPANTS_EXTRA_TRUSTED_DIRS[@]}"; do
+    [[ $dir == /* ]] || continue
+    [[ $dir == *..* ]] && continue
+    extra+="${extra:+:}$dir"
+  done
   if [[ -n $extra ]]; then
     path="$extra:$path"
   fi
-  local dir out=""
   local IFS=':'
   for dir in $path; do
     [[ $dir == /* ]] || continue
@@ -75,13 +89,14 @@ underpants_run() {
   local env_bin
   env_bin="$(underpants_resolve env)" || return 1
   local -a env_args=(
-    "PATH=$(underpants_trusted_path)"
+    "PATH=$UNDERPANTS_DEFAULT_TRUSTED_PATH"
     "HOME=${HOME:-}"
     "LANG=${LANG:-C.UTF-8}"
   )
   local var
   while IFS= read -r var; do
     [[ -n $var ]] || continue
+    [[ $var == UNDERPANTS_TRUSTED_PATH ]] && continue
     env_args+=("$var=${!var}")
   done < <(compgen -v UNDERPANTS_ || true)
   if [[ $session == true ]]; then

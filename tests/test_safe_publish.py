@@ -138,7 +138,7 @@ class SafePublishTests(unittest.TestCase):
         os.chmod(shadow, 0o755)
         env = os.environ.copy()
         env["PATH"] = str(shadow_dir) + os.pathsep + env.get("PATH", "")
-        env.pop("UNDERPANTS_TRUSTED_PATH", None)
+        env["UNDERPANTS_TRUSTED_PATH"] = str(shadow_dir)
         with patch.dict(os.environ, env, clear=True):
             resolved = safe.resolve_trusted_exec("python3")
         self.assertTrue(resolved.startswith("/usr/bin/") or resolved.startswith("/bin/"), resolved)
@@ -153,18 +153,20 @@ class SafePublishTests(unittest.TestCase):
         planted = trusted / "omarchy-toggle-enabled"
         planted.write_text("#!/bin/sh\nexit 0\n")
         os.chmod(planted, 0o755)
+        extra = [str(trusted)]
         env = os.environ.copy()
         env["UNDERPANTS_TRUSTED_PATH"] = str(trusted)
         with patch.dict(os.environ, env, clear=False):
-            self.assertEqual(safe.resolve_trusted_exec("omarchy-toggle-enabled"), str(planted))
+            with self.assertRaisesRegex(safe.PublishError, "trusted omarchy-toggle-enabled"):
+                safe.resolve_trusted_exec("omarchy-toggle-enabled")
+            self.assertEqual(safe.resolve_trusted_exec("omarchy-toggle-enabled", extra=extra), str(planted))
         victim = outside / "evil"
         victim.write_text("#!/bin/sh\nexit 0\n")
         os.chmod(victim, 0o755)
         link = trusted / "eviltool"
         link.symlink_to(victim)
-        with patch.dict(os.environ, env, clear=False):
-            with self.assertRaisesRegex(safe.PublishError, "trusted eviltool"):
-                safe.resolve_trusted_exec("eviltool")
+        with self.assertRaisesRegex(safe.PublishError, "trusted eviltool"):
+            safe.resolve_trusted_exec("eviltool", extra=extra)
 
     def test_wrapper_fails_closed_without_trusted_toggle(self):
         self.plant_plugin()
@@ -336,8 +338,9 @@ class InstallerScriptTests(unittest.TestCase):
         os.chmod(shadow_python, 0o755)
         self.env = os.environ.copy()
         self.env["HOME"] = str(self.home)
-        self.env["UNDERPANTS_TRUSTED_PATH"] = str(self.bin)
+        self.env.pop("UNDERPANTS_TRUSTED_PATH", None)
         self.env["PATH"] = str(self.shadow) + os.pathsep + self.env.get("PATH", "")
+        self.trusted_args = ["--trusted-path", str(self.bin)]
 
     def plant_plugin(self):
         plugin = self.home / safe.PLUGIN_REL
@@ -354,7 +357,7 @@ class InstallerScriptTests(unittest.TestCase):
         wrapper.parent.mkdir(parents=True)
         wrapper.symlink_to(victim)
         result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(result.returncode, 0)
@@ -366,7 +369,7 @@ class InstallerScriptTests(unittest.TestCase):
         import subprocess
         self.plant_plugin()
         result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -393,7 +396,7 @@ class InstallerScriptTests(unittest.TestCase):
         legacy.write_bytes(b"keep-legacy")
         os.chmod(legacy, 0o644)
         result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -401,6 +404,21 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertIn(str(legacy), result.stdout)
         self.assertIn("Legacy PATH-override wrapper still present", result.stdout)
         self.assertTrue((self.home / safe.WRAPPER_REL).is_file())
+
+    def test_wrapper_script_ignores_trusted_path_env(self):
+        import subprocess
+        if os.path.isfile("/usr/bin/omarchy-toggle-enabled") or os.path.isfile("/bin/omarchy-toggle-enabled"):
+            self.skipTest("host already has a trusted omarchy-toggle-enabled")
+        self.plant_plugin()
+        env = self.env.copy()
+        env["UNDERPANTS_TRUSTED_PATH"] = str(self.bin)
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trusted omarchy-toggle-enabled", result.stderr)
+        self.assertFalse((self.home / safe.WRAPPER_REL).exists())
 
     def test_idle_docs_prefer_absolute_path_over_path_selection(self):
         readme = (ROOT / "README.md").read_text()

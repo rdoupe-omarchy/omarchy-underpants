@@ -13,14 +13,26 @@ source "$source_dir/scripts/trusted_exec.sh"
 target="$HOME/.config/omarchy/plugins/douper.underpants"
 force=false
 enable=false
-for arg in "$@"; do
-  case "$arg" in
-    --force) force=true ;;
-    --enable) enable=true ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force) force=true; shift ;;
+    --enable) enable=true; shift ;;
+    --trusted-path)
+      if [[ $# -lt 2 ]]; then
+        printf 'Missing directory for --trusted-path\n' >&2
+        exit 2
+      fi
+      underpants_add_trusted_dir "$2" || exit 2
+      shift 2
+      ;;
+    --trusted-path=*)
+      underpants_add_trusted_dir "${1#--trusted-path=}" || exit 2
+      shift
+      ;;
     --help|-h)
       printf '%s\n' 'Usage: bash install.sh [--force] [--enable]' 'Existing local copies require --force and are backed up. Activation is opt-in.'
       exit 0 ;;
-    *) printf 'Unknown option: %s\n' "$arg" >&2; exit 2 ;;
+    *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 python3="$(underpants_resolve python3)"

@@ -59,12 +59,17 @@ class PublishError(RuntimeError):
         self.status = status
 
 
-def trusted_path_dirs():
-    extra = os.environ.get("UNDERPANTS_TRUSTED_PATH", "")
-    raw = f"{extra}{os.pathsep}{DEFAULT_TRUSTED_PATH}" if extra else DEFAULT_TRUSTED_PATH
+def trusted_path_dirs(extra=None):
+    """Return allowlisted directories. extra is an explicit caller list, never env."""
+    parts = []
+    if extra:
+        if isinstance(extra, str):
+            extra = extra.split(os.pathsep)
+        parts.extend(extra)
+    parts.extend(DEFAULT_TRUSTED_PATH.split(os.pathsep))
     dirs = []
     seen = set()
-    for part in raw.split(os.pathsep):
+    for part in parts:
         if not part or not os.path.isabs(part) or ".." in Path(part).parts:
             continue
         if part not in seen:
@@ -73,8 +78,8 @@ def trusted_path_dirs():
     return dirs or ["/usr/bin", "/bin"]
 
 
-def trusted_path_string():
-    return os.pathsep.join(trusted_path_dirs())
+def trusted_path_string(extra=None):
+    return os.pathsep.join(trusted_path_dirs(extra=extra))
 
 
 def _is_trusted_real(real, dirs=None):
@@ -84,11 +89,11 @@ def _is_trusted_real(real, dirs=None):
     return False
 
 
-def resolve_trusted_exec(name):
+def resolve_trusted_exec(name, extra=None):
     """Return an allowlisted absolute executable. Never search ambient PATH."""
     if not name or name in (".", "..") or os.sep in name:
         raise PublishError(f"Refusing unsafe tool name {name}.")
-    dirs = trusted_path_dirs()
+    dirs = trusted_path_dirs(extra=extra)
     for directory in dirs:
         candidate = os.path.join(directory, name)
         try:
@@ -100,18 +105,18 @@ def resolve_trusted_exec(name):
         if _is_trusted_real(real, dirs):
             return real
     raise PublishError(
-        f"Refusing to proceed without a trusted {name} (searched {trusted_path_string()})."
+        f"Refusing to proceed without a trusted {name} (searched {trusted_path_string(extra=extra)})."
     )
 
 
 def closed_env(*, session=False):
     env = {
-        "PATH": trusted_path_string(),
+        "PATH": DEFAULT_TRUSTED_PATH,
         "HOME": os.environ.get("HOME", ""),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
     }
     for key, value in os.environ.items():
-        if key.startswith("UNDERPANTS_"):
+        if key.startswith("UNDERPANTS_") and key != "UNDERPANTS_TRUSTED_PATH":
             env[key] = value
     if session:
         for key in SESSION_ENV_KEYS:
@@ -224,12 +229,12 @@ exec "$env" -i "${{closed[@]}}" "$python3" "$screensaver" \\
 """
 
 
-def resolve_wrapper_tools():
+def resolve_wrapper_tools(extra=None):
     return {
-        "pgrep": resolve_trusted_exec("pgrep"),
-        "toggle": resolve_trusted_exec("omarchy-toggle-enabled"),
-        "python3": resolve_trusted_exec("python3"),
-        "env": resolve_trusted_exec("env"),
+        "pgrep": resolve_trusted_exec("pgrep", extra=extra),
+        "toggle": resolve_trusted_exec("omarchy-toggle-enabled", extra=extra),
+        "python3": resolve_trusted_exec("python3", extra=extra),
+        "env": resolve_trusted_exec("env", extra=extra),
     }
 
 
@@ -766,10 +771,10 @@ def require_installed_plugin(home):
         os.close(home_fd)
 
 
-def publish_wrapper(home, *, tools=None):
+def publish_wrapper(home, *, tools=None, extra=None):
     require_installed_plugin(home)
     home_path, home_names, home_fd = open_home(home)
-    tools = dict(tools or resolve_wrapper_tools())
+    tools = dict(tools or resolve_wrapper_tools(extra=extra))
     screensaver = str(Path(home_path) / PLUGIN_PY_REL)
     if not os.path.isabs(screensaver):
         raise PublishError("Refusing a non-absolute screensaver path.")
@@ -793,6 +798,7 @@ def _parse_args(argv):
     plugin.add_argument("--validator", nargs="+", default=None)
     wrapper = sub.add_parser("install-wrapper")
     wrapper.add_argument("--home", required=True)
+    wrapper.add_argument("--trusted-path", action="append", default=[])
     return parser.parse_args(argv)
 
 
@@ -807,7 +813,8 @@ def main(argv=None):
             if message:
                 print(message)
             return 0
-        publish_wrapper(args.home)
+        extra = args.trusted_path or None
+        publish_wrapper(args.home, extra=extra)
         return 0
     except PublishError as error:
         print(str(error), file=sys.stderr)

@@ -35,12 +35,15 @@ class InstallerTests(unittest.TestCase):
         self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.tmp / "unused-config"),
                         UNDERPANTS_TEST_LOG=str(self.tmp / "calls"),
                         UNDERPANTS_TEST_VALIDATOR=VALIDATOR,
-                        UNDERPANTS_TRUSTED_PATH=str(self.bin),
                         PATH=str(self.shadow) + os.pathsep + str(self.bin) + os.pathsep + self.env["PATH"])
+        self.env.pop("UNDERPANTS_TRUSTED_PATH", None)
 
-    def install(self, *args):
-        return subprocess.run(["bash", str(ROOT / "install.sh"), *args], env=self.env,
-                              capture_output=True, text=True, timeout=10)
+    def install(self, *args, trusted=True):
+        cmd = ["bash", str(ROOT / "install.sh")]
+        if trusted:
+            cmd.extend(["--trusted-path", str(self.bin)])
+        cmd.extend(args)
+        return subprocess.run(cmd, env=self.env, capture_output=True, text=True, timeout=10)
 
     def test_clean_install_has_no_implicit_activation(self):
         result = self.install()
@@ -58,7 +61,8 @@ class InstallerTests(unittest.TestCase):
         if any(os.path.isfile(os.path.join(directory, "omarchy")) for directory in ("/usr/bin", "/bin")):
             self.skipTest("host already has a trusted omarchy")
         env = self.env.copy()
-        env.pop("UNDERPANTS_TRUSTED_PATH", None)
+        env["UNDERPANTS_TRUSTED_PATH"] = str(self.bin)
+        env["PATH"] = str(self.shadow) + os.pathsep + env["PATH"]
         result = subprocess.run(["bash", str(ROOT / "install.sh")], env=env,
                                 capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
