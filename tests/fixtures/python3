@@ -1,4 +1,14 @@
 #!/bin/bash
 # Fake renderer used only by the isolated QML lifecycle test.
-printf '%s\n' "$*" >> "$UNDERPANTS_TEST_LOG"
+log="${UNDERPANTS_TEST_LOG:-${XDG_RUNTIME_DIR:?}/calls}"
+printf '%s\n' "$*" >> "$log"
+{
+  printf 'PATH=%s\n' "${PATH-}"
+  printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR-UNSET}"
+  printf 'PYTHONPATH=%s\n' "${PYTHONPATH-UNSET}"
+  printf 'PYTHONHOME=%s\n' "${PYTHONHOME-UNSET}"
+  printf 'PYTHONINSPECT=%s\n' "${PYTHONINSPECT-UNSET}"
+  printf 'LD_PRELOAD=%s\n' "${LD_PRELOAD-UNSET}"
+  printf 'LD_LIBRARY_PATH=%s\n' "${LD_LIBRARY_PATH-UNSET}"
+} > "${XDG_RUNTIME_DIR:?}/child-env"
 sleep 0.05
