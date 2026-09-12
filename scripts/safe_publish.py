@@ -566,10 +566,13 @@ def _validate_plugin_fd(plugin_fd, validator):
     # Child /proc/self is the validator, not this process. The parent pid fd
     # still names the inode we hold.
     path = f"/proc/{os.getpid()}/fd/{plugin_fd}"
-    result = subprocess.run(
-        [*validator, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=15, env=closed_env(),
-    )
+    try:
+        result = subprocess.run(
+            [*validator, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=15, env=closed_env(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise PublishError("Validator timed out.") from error
     if len(result.stdout) > PRODUCER_STDOUT_MAX or len(result.stderr) > PRODUCER_STDERR_MAX:
         raise PublishError("Refusing oversized validator output.")
     if result.returncode != 0:
