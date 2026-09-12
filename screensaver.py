@@ -783,8 +783,9 @@ def session_lock():
             yield None
             return
         _require_private_lock(lock_fd)
-        # Hold the private-dir inode, not a pathname a same-UID swap can retarget.
-        yield Path("/proc/self/fd") / str(private_fd)
+        # Hold the private-dir inode. Use the launcher PID so children inherit a
+        # path that still names this process after they exec (O_CLOEXEC + /proc/self).
+        yield Path("/proc") / str(os.getpid()) / "fd" / str(private_fd)
     finally:
         for fd in (lock_fd, private_fd, runtime_fd):
             if fd is not None:

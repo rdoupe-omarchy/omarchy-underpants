@@ -141,7 +141,8 @@ class SafePublishTests(unittest.TestCase):
         env.pop("UNDERPANTS_TRUSTED_PATH", None)
         with patch.dict(os.environ, env, clear=True):
             resolved = safe.resolve_trusted_exec("python3")
-        self.assertIn(resolved, ("/usr/bin/python3", "/bin/python3"))
+        self.assertTrue(resolved.startswith("/usr/bin/") or resolved.startswith("/bin/"), resolved)
+        self.assertTrue(os.path.isfile(resolved))
         self.assertNotEqual(resolved, str(shadow))
 
     def test_resolve_trusted_exec_uses_allowlist_and_rejects_symlink_escape(self):

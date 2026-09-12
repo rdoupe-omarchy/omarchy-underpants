@@ -203,7 +203,10 @@ class ReleaseTests(unittest.TestCase):
                 with saver.session_lock() as state_dir:
                     private = Path(runtime) / saver.RUNTIME_SUBDIR
                     self.assertTrue(os.path.samefile(state_dir, private))
-                    self.assertEqual(state_dir, Path("/proc/self/fd") / os.path.basename(state_dir))
+                    self.assertEqual(
+                        state_dir,
+                        Path("/proc") / str(os.getpid()) / "fd" / os.path.basename(state_dir),
+                    )
                     lock = state_dir / saver.session_lock_name()
                     self.assertTrue(lock.is_file())
                     self.assertFalse(lock.is_symlink())

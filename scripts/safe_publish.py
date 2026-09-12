@@ -92,13 +92,13 @@ def resolve_trusted_exec(name):
     for directory in dirs:
         candidate = os.path.join(directory, name)
         try:
-            if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
-                continue
             real = os.path.realpath(candidate)
+            if not os.path.isfile(real) or not os.access(real, os.X_OK):
+                continue
         except OSError:
             continue
         if _is_trusted_real(real, dirs):
-            return candidate
+            return real
     raise PublishError(
         f"Refusing to proceed without a trusted {name} (searched {trusted_path_string()})."
     )
