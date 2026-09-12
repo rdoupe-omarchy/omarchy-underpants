@@ -1,0 +1,4 @@
+#!/bin/bash
+# Isolated test stand-in: screensaver-off is never enabled.
+set -euo pipefail
+exit 1

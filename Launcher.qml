@@ -25,7 +25,7 @@ Item {
 
   Process {
     id: launcher
-    command: ["python3", decodeURIComponent(Qt.resolvedUrl("screensaver.py").toString().replace(/^file:\/\//, "")), "--launch", "--mode", root.mode]
+    command: ["/usr/bin/python3", decodeURIComponent(Qt.resolvedUrl("screensaver.py").toString().replace(/^file:\/\//, "")), "--launch", "--mode", root.mode]
     onRunningChanged: {
       if (running || !root.requested) return
       root.requested = false

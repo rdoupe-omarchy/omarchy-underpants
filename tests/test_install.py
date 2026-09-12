@@ -23,16 +23,27 @@ class InstallerTests(unittest.TestCase):
             dest = self.bin / name
             shutil.copyfile(ROOT / "tests/fixtures" / name, dest)
             dest.chmod(0o755)
+        self.shadow = self.tmp / "shadow"
+        self.shadow.mkdir()
+        for name in ("omarchy", "omarchy-shell", "python3"):
+            dest = self.shadow / name
+            dest.write_text('#!/bin/bash\nprintf "SHADOW %s\\n" "$0" >> "$UNDERPANTS_TEST_LOG"\nexit 42\n')
+            dest.chmod(0o755)
         self.env = os.environ.copy()
         # Fixture home only; never invoke the real shell IPC or user installer.
+        # Ambient PATH is poisoned; only the allowlisted trusted bin is used.
         self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.tmp / "unused-config"),
                         UNDERPANTS_TEST_LOG=str(self.tmp / "calls"),
                         UNDERPANTS_TEST_VALIDATOR=VALIDATOR,
-                        PATH=str(self.bin) + os.pathsep + self.env["PATH"])
+                        PATH=str(self.shadow) + os.pathsep + str(self.bin) + os.pathsep + self.env["PATH"])
+        self.env.pop("UNDERPANTS_TRUSTED_PATH", None)
 
-    def install(self, *args):
-        return subprocess.run(["bash", str(ROOT / "install.sh"), *args], env=self.env,
-                              capture_output=True, text=True, timeout=10)
+    def install(self, *args, trusted=True):
+        cmd = ["bash", str(ROOT / "install.sh")]
+        if trusted:
+            cmd.extend(["--trusted-path", str(self.bin)])
+        cmd.extend(args)
+        return subprocess.run(cmd, env=self.env, capture_output=True, text=True, timeout=10)
 
     def test_clean_install_has_no_implicit_activation(self):
         result = self.install()
@@ -42,8 +53,23 @@ class InstallerTests(unittest.TestCase):
         calls = (self.tmp / "calls").read_text()
         self.assertNotIn("enable", calls)
         self.assertNotIn("rescanPlugins", calls)
+        self.assertNotIn("SHADOW", calls)
         self.assertFalse((self.tmp / "unused-config").exists())
         self.assertFalse((self.home / ".config/omarchy/shell.json").exists())
+
+    def test_missing_trusted_omarchy_fails_closed_and_ignores_path_shadow(self):
+        if any(os.path.isfile(os.path.join(directory, "omarchy")) for directory in ("/usr/bin", "/bin")):
+            self.skipTest("host already has a trusted omarchy")
+        env = self.env.copy()
+        env["UNDERPANTS_TRUSTED_PATH"] = str(self.bin)
+        env["PATH"] = str(self.shadow) + os.pathsep + env["PATH"]
+        result = subprocess.run(["bash", str(ROOT / "install.sh")], env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trusted omarchy", result.stderr)
+        self.assertFalse(self.target.exists())
+        log = self.tmp / "calls"
+        self.assertFalse(log.exists() and "SHADOW" in log.read_text())
 
     def test_reinstall_requires_consent_and_makes_backup(self):
         self.assertEqual(self.install().returncode, 0)

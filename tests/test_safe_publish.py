@@ -6,15 +6,30 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("safe_publish", ROOT / "scripts/safe_publish.py")
 safe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(safe)
 
+SAMPLE_TOOLS = {
+    "pgrep": "/usr/bin/pgrep",
+    "toggle": "/usr/bin/omarchy-toggle-enabled",
+    "python3": "/usr/bin/python3",
+    "env": "/usr/bin/env",
+}
+
 
 def load_sources():
     return {name: (ROOT / name).read_bytes() for name in safe.PLUGIN_FILES}
+
+
+def expected_wrapper(home):
+    return safe.wrapper_payload(
+        screensaver=str(home / safe.PLUGIN_PY_REL),
+        **SAMPLE_TOOLS,
+    )
 
 
 class SafePublishTests(unittest.TestCase):
@@ -44,6 +59,17 @@ class SafePublishTests(unittest.TestCase):
             self.assertNotIn("install -m", text)
             self.assertNotIn("chmod +x", text)
             self.assertIn("safe_publish.py", text)
+            self.assertIn("underpants_resolve", text)
+            self.assertIn("underpants_run", text)
+            self.assertNotIn("\npython3 ", text)
+            self.assertNotIn("\nomarchy ", text)
+            self.assertNotIn("dirname", text)
+            self.assertNotIn("\ncat ", text)
+            self.assertNotIn("readlink", text)
+            self.assertNotIn("\nsleep ", text)
+        qml = (ROOT / "Launcher.qml").read_text()
+        self.assertIn('"/usr/bin/python3"', qml)
+        self.assertNotIn('["python3"', qml)
 
     def test_open_flags_are_nofollow_exclusive_and_do_not_truncate(self):
         self.assertTrue(safe.DIR_OPEN_FLAGS & os.O_NOFOLLOW)
@@ -73,15 +99,83 @@ class SafePublishTests(unittest.TestCase):
 
     def test_wrapper_install_creates_executable_regular_file(self):
         self.plant_plugin()
-        path = safe.publish_wrapper(str(self.home))
+        path = safe.publish_wrapper(str(self.home), tools=SAMPLE_TOOLS)
         self.assertEqual(path, self.wrapper)
         self.assertFalse(self.wrapper.is_symlink())
-        self.assertEqual(self.wrapper.read_bytes(), safe.WRAPPER_PAYLOAD.encode())
+        self.assertEqual(self.wrapper.read_bytes(), expected_wrapper(self.home).encode())
         info = self.wrapper.stat()
         self.assertTrue(stat.S_ISREG(info.st_mode))
         self.assertEqual(stat.S_IMODE(info.st_mode), 0o755)
         self.assertEqual(info.st_nlink, 1)
         self.assertEqual(info.st_uid, os.geteuid())
+
+    def test_wrapper_pins_absolute_tools_and_closed_env(self):
+        text = expected_wrapper(self.home)
+        self.assertIn("pgrep=/usr/bin/pgrep", text)
+        self.assertIn("toggle=/usr/bin/omarchy-toggle-enabled", text)
+        self.assertIn("python3=/usr/bin/python3", text)
+        self.assertIn("env=/usr/bin/env", text)
+        self.assertIn("PATH=/usr/bin:/bin", text)
+        self.assertIn('"$env" -i', text)
+        screensaver = str(self.home / safe.PLUGIN_PY_REL)
+        self.assertIn(screensaver, text)
+        self.assertNotIn("$HOME/.config/omarchy/plugins", text)
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            self.assertFalse(stripped.startswith("pgrep "))
+            self.assertFalse(stripped.startswith("python3 "))
+            self.assertFalse(stripped.startswith("omarchy-toggle-enabled "))
+            self.assertFalse(stripped.startswith("exec python3"))
+
+    def test_resolve_trusted_exec_ignores_ambient_path_shadow(self):
+        scratch = Path(self.scratch.name)
+        shadow_dir = scratch / "shadow-bin"
+        shadow_dir.mkdir()
+        shadow = shadow_dir / "python3"
+        shadow.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(shadow, 0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(shadow_dir) + os.pathsep + env.get("PATH", "")
+        env["UNDERPANTS_TRUSTED_PATH"] = str(shadow_dir)
+        with patch.dict(os.environ, env, clear=True):
+            resolved = safe.resolve_trusted_exec("python3")
+        self.assertTrue(resolved.startswith("/usr/bin/") or resolved.startswith("/bin/"), resolved)
+        self.assertTrue(os.path.isfile(resolved))
+        self.assertNotEqual(resolved, str(shadow))
+
+    def test_resolve_trusted_exec_uses_allowlist_and_rejects_symlink_escape(self):
+        trusted = Path(self.scratch.name) / "trusted"
+        outside = Path(self.scratch.name) / "outside"
+        trusted.mkdir()
+        outside.mkdir()
+        planted = trusted / "omarchy-toggle-enabled"
+        planted.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(planted, 0o755)
+        extra = [str(trusted)]
+        env = os.environ.copy()
+        env["UNDERPANTS_TRUSTED_PATH"] = str(trusted)
+        with patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(safe.PublishError, "trusted omarchy-toggle-enabled"):
+                safe.resolve_trusted_exec("omarchy-toggle-enabled")
+            self.assertEqual(safe.resolve_trusted_exec("omarchy-toggle-enabled", extra=extra), str(planted))
+        victim = outside / "evil"
+        victim.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(victim, 0o755)
+        link = trusted / "eviltool"
+        link.symlink_to(victim)
+        with self.assertRaisesRegex(safe.PublishError, "trusted eviltool"):
+            safe.resolve_trusted_exec("eviltool", extra=extra)
+
+    def test_wrapper_fails_closed_without_trusted_toggle(self):
+        self.plant_plugin()
+        env = {key: value for key, value in os.environ.items() if key != "UNDERPANTS_TRUSTED_PATH"}
+        with patch.dict(os.environ, env, clear=True):
+            if os.path.isfile("/usr/bin/omarchy-toggle-enabled") or os.path.isfile("/bin/omarchy-toggle-enabled"):
+                self.skipTest("host already has a trusted omarchy-toggle-enabled")
+            with self.assertRaisesRegex(safe.PublishError, "trusted omarchy-toggle-enabled"):
+                safe.publish_wrapper(str(self.home))
 
     def test_wrapper_refuses_existing_and_does_not_truncate(self):
         self.plant_plugin()
@@ -89,7 +183,7 @@ class SafePublishTests(unittest.TestCase):
         self.wrapper.write_bytes(b"keep-me")
         os.chmod(self.wrapper, 0o644)
         with self.assertRaises(safe.PublishError):
-            safe.publish_wrapper(str(self.home))
+            safe.publish_wrapper(str(self.home), tools=SAMPLE_TOOLS)
         self.assertEqual(self.wrapper.read_bytes(), b"keep-me")
 
     def test_wrapper_does_not_follow_or_truncate_symlink(self):
@@ -99,7 +193,7 @@ class SafePublishTests(unittest.TestCase):
         self.wrapper.parent.mkdir(parents=True)
         self.wrapper.symlink_to(victim)
         with self.assertRaises(safe.PublishError):
-            safe.publish_wrapper(str(self.home))
+            safe.publish_wrapper(str(self.home), tools=SAMPLE_TOOLS)
         self.assertEqual(victim.read_bytes(), b"precious-data")
         self.assertTrue(self.wrapper.is_symlink())
         self.assertEqual(os.readlink(self.wrapper), str(victim))
@@ -114,7 +208,7 @@ class SafePublishTests(unittest.TestCase):
         local.mkdir()
         (local / "bin").symlink_to(real)
         with self.assertRaises(safe.PublishError):
-            safe.publish_wrapper(str(self.home))
+            safe.publish_wrapper(str(self.home), tools=SAMPLE_TOOLS)
         self.assertEqual(victim.read_bytes(), b"keep")
         self.assertEqual(list(real.iterdir()), [victim])
 
@@ -123,7 +217,7 @@ class SafePublishTests(unittest.TestCase):
         self.wrapper.parent.mkdir(parents=True)
         os.mkfifo(self.wrapper, 0o644)
         with self.assertRaises(safe.PublishError):
-            safe.publish_wrapper(str(self.home))
+            safe.publish_wrapper(str(self.home), tools=SAMPLE_TOOLS)
         self.assertTrue(stat.S_ISFIFO(os.stat(self.wrapper).st_mode))
 
     def test_plugin_refuses_existing_without_force(self):
@@ -232,8 +326,21 @@ class InstallerScriptTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.home = Path(self.scratch.name) / "script-home"
         self.home.mkdir(0o700)
+        self.bin = Path(self.scratch.name) / "trusted-bin"
+        self.bin.mkdir()
+        toggle = self.bin / "omarchy-toggle-enabled"
+        toggle.write_bytes((ROOT / "tests/fixtures/omarchy-toggle-enabled").read_bytes())
+        os.chmod(toggle, 0o755)
+        self.shadow = Path(self.scratch.name) / "shadow"
+        self.shadow.mkdir()
+        shadow_python = self.shadow / "python3"
+        shadow_python.write_text("#!/bin/bash\nexit 42\n")
+        os.chmod(shadow_python, 0o755)
         self.env = os.environ.copy()
         self.env["HOME"] = str(self.home)
+        self.env.pop("UNDERPANTS_TRUSTED_PATH", None)
+        self.env["PATH"] = str(self.shadow) + os.pathsep + self.env.get("PATH", "")
+        self.trusted_args = ["--trusted-path", str(self.bin)]
 
     def plant_plugin(self):
         plugin = self.home / safe.PLUGIN_REL
@@ -250,25 +357,80 @@ class InstallerScriptTests(unittest.TestCase):
         wrapper.parent.mkdir(parents=True)
         wrapper.symlink_to(victim)
         result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(victim.read_bytes(), b"still-here")
         self.assertTrue(wrapper.is_symlink())
-        self.assertNotIn("Wrote ~/.local/bin/omarchy-launch-screensaver", result.stdout)
+        self.assertNotIn(f"Wrote {wrapper}", result.stdout)
 
-    def test_wrapper_script_happy_path(self):
+    def test_wrapper_script_happy_path_uses_trusted_python_and_absolute_tools(self):
         import subprocess
         self.plant_plugin()
         result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         wrapper = self.home / safe.WRAPPER_REL
-        self.assertEqual(wrapper.read_bytes(), safe.WRAPPER_PAYLOAD.encode())
-        self.assertIn("Wrote ~/.local/bin/omarchy-launch-screensaver", result.stdout)
+        text = wrapper.read_text()
+        self.assertIn(safe.resolve_trusted_exec("pgrep"), text)
+        self.assertIn(str(self.bin / "omarchy-toggle-enabled"), text)
+        self.assertIn(safe.resolve_trusted_exec("python3"), text)
+        self.assertIn(safe.resolve_trusted_exec("env"), text)
+        self.assertIn('"$env" -i', text)
+        self.assertIn("PATH=/usr/bin:/bin", text)
+        self.assertIn(str(self.home / safe.PLUGIN_PY_REL), text)
+        self.assertIn(f"Wrote {wrapper}", result.stdout)
+        self.assertIn("fixed absolute launcher", result.stdout)
+        self.assertNotIn("export PATH=", result.stdout)
+        self.assertNotIn("PREPEND", result.stdout)
+        self.assertNotIn("Legacy PATH-override wrapper still present", result.stdout)
+
+    def test_wrapper_script_reports_legacy_path_override(self):
+        import subprocess
+        self.plant_plugin()
+        legacy = self.home / ".local/bin/omarchy-launch-screensaver"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b"keep-legacy")
+        os.chmod(legacy, 0o644)
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh"), *self.trusted_args],
+            env=self.env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(legacy.read_bytes(), b"keep-legacy")
+        self.assertIn(str(legacy), result.stdout)
+        self.assertIn("Legacy PATH-override wrapper still present", result.stdout)
+        self.assertTrue((self.home / safe.WRAPPER_REL).is_file())
+
+    def test_wrapper_script_ignores_trusted_path_env(self):
+        import subprocess
+        if os.path.isfile("/usr/bin/omarchy-toggle-enabled") or os.path.isfile("/bin/omarchy-toggle-enabled"):
+            self.skipTest("host already has a trusted omarchy-toggle-enabled")
+        self.plant_plugin()
+        env = self.env.copy()
+        env["UNDERPANTS_TRUSTED_PATH"] = str(self.bin)
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trusted omarchy-toggle-enabled", result.stderr)
+        self.assertFalse((self.home / safe.WRAPPER_REL).exists())
+
+    def test_idle_docs_prefer_absolute_path_over_path_selection(self):
+        readme = (ROOT / "README.md").read_text()
+        installer = (ROOT / "scripts/install-default-screensaver.sh").read_text()
+        self.assertNotIn("export PATH=", readme)
+        self.assertNotIn("PREPEND", readme)
+        self.assertNotIn("export PATH=", installer)
+        self.assertNotIn("dirname", installer)
+        self.assertNotIn("\ncat ", installer)
+        self.assertIn("underpants-launch-screensaver", readme)
+        self.assertIn("omarchy-launch-screensaver", readme)
+        self.assertIn("fixed absolute", readme.lower() + installer.lower())
 
 
 if __name__ == "__main__":

@@ -11,11 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     "manifest.json", "Launcher.qml", "screensaver.py", "README.md", "LICENSE",
     "install.sh", "menu-entries.json", "CHANGELOG.md", "PUBLISHING.md", "TESTING.md",
-    "scripts/package.py", "scripts/safe_publish.py", "scripts/install-default-screensaver.sh",
+    "scripts/package.py", "scripts/safe_publish.py", "scripts/trusted_exec.sh",
+    "scripts/install-default-screensaver.sh",
     "tests/test_screensaver.py", "tests/test_release.py",
     "tests/test_install.py", "tests/test_safe_publish.py", "tests/test_qml.py", "tests/test_package.py",
     "tests/LauncherTest.qml",     "tests/fixtures/python3", "tests/fixtures/omarchy",
     "tests/fixtures/omarchy-shell", "tests/fixtures/omarchy-plugin-validate",
+    "tests/fixtures/omarchy-toggle-enabled",
     "tests/acceptance.py", ".gitignore",
     "preview.png", "assets/zen.png",
 )
