@@ -63,6 +63,9 @@ class SafePublishTests(unittest.TestCase):
             self.assertIn("underpants_run", text)
             self.assertNotIn("\npython3 ", text)
             self.assertNotIn("\nomarchy ", text)
+            self.assertNotIn("dirname", text)
+            self.assertNotIn("\ncat ", text)
+            self.assertNotIn("readlink", text)
 
     def test_open_flags_are_nofollow_exclusive_and_do_not_truncate(self):
         self.assertTrue(safe.DIR_OPEN_FLAGS & os.O_NOFOLLOW)
@@ -364,9 +367,10 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         wrapper = self.home / safe.WRAPPER_REL
         text = wrapper.read_text()
-        self.assertIn("/usr/bin/pgrep", text)
+        self.assertIn(safe.resolve_trusted_exec("pgrep"), text)
         self.assertIn(str(self.bin / "omarchy-toggle-enabled"), text)
-        self.assertIn("/usr/bin/python3", text)
+        self.assertIn(safe.resolve_trusted_exec("python3"), text)
+        self.assertIn(safe.resolve_trusted_exec("env"), text)
         self.assertIn('"$env" -i', text)
         self.assertIn("PATH=/usr/bin:/bin", text)
         self.assertIn(str(self.home / safe.PLUGIN_PY_REL), text)
@@ -374,6 +378,24 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertIn("fixed absolute launcher", result.stdout)
         self.assertNotIn("export PATH=", result.stdout)
         self.assertNotIn("PREPEND", result.stdout)
+        self.assertNotIn("Legacy PATH-override wrapper still present", result.stdout)
+
+    def test_wrapper_script_reports_legacy_path_override(self):
+        import subprocess
+        self.plant_plugin()
+        legacy = self.home / ".local/bin/omarchy-launch-screensaver"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b"keep-legacy")
+        os.chmod(legacy, 0o644)
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/install-default-screensaver.sh")],
+            env=self.env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(legacy.read_bytes(), b"keep-legacy")
+        self.assertIn(str(legacy), result.stdout)
+        self.assertIn("Legacy PATH-override wrapper still present", result.stdout)
+        self.assertTrue((self.home / safe.WRAPPER_REL).is_file())
 
     def test_idle_docs_prefer_absolute_path_over_path_selection(self):
         readme = (ROOT / "README.md").read_text()
@@ -381,7 +403,10 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertNotIn("export PATH=", readme)
         self.assertNotIn("PREPEND", readme)
         self.assertNotIn("export PATH=", installer)
+        self.assertNotIn("dirname", installer)
+        self.assertNotIn("\ncat ", installer)
         self.assertIn("underpants-launch-screensaver", readme)
+        self.assertIn("omarchy-launch-screensaver", readme)
         self.assertIn("fixed absolute", readme.lower() + installer.lower())
 
 

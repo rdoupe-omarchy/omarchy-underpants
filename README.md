@@ -83,7 +83,7 @@ If you also want to stop the stock idle ttfx from launching, turn the idle scree
 
 Optional: default to Zen with `UNDERPANTS_MODE=zen` in the environment that starts the launcher.
 
-**Undo:** remove `$HOME/.local/bin/underpants-launch-screensaver`. Stock ttfx is unchanged unless you turned it off separately.
+**Undo:** remove `$HOME/.local/bin/underpants-launch-screensaver`. If an older install left `$HOME/.local/bin/omarchy-launch-screensaver` or a login-shell PATH override that selected it, remove those too so official idle is no longer intercepted. Stock ttfx is unchanged unless you turned it off separately.
 
 ## Preview and checks
 

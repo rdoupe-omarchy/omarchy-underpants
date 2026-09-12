@@ -31,6 +31,17 @@ underpants_is_trusted_real() {
   return 1
 }
 
+underpants_realpath() {
+  local path="$1" rl
+  for rl in /usr/bin/readlink /bin/readlink; do
+    if [[ -f $rl && -x $rl ]]; then
+      "$rl" -f -- "$path" 2>/dev/null
+      return $?
+    fi
+  done
+  return 1
+}
+
 underpants_resolve() {
   local name="$1"
   case "$name" in
@@ -43,12 +54,15 @@ underpants_resolve() {
   local IFS=':'
   for dir in $(underpants_trusted_path); do
     cand="$dir/$name"
-    if [[ -f $cand && -x $cand ]]; then
-      real="$(readlink -f -- "$cand" 2>/dev/null)" || continue
-      if underpants_is_trusted_real "$real"; then
+    if [[ -L $cand ]]; then
+      real="$(underpants_realpath "$cand")" || continue
+      if [[ -f $real && -x $real ]] && underpants_is_trusted_real "$real"; then
         printf '%s\n' "$cand"
         return 0
       fi
+    elif [[ -f $cand && -x $cand ]]; then
+      printf '%s\n' "$cand"
+      return 0
     fi
   done
   printf 'Refusing to proceed without a trusted %s (searched %s).\n' "$name" "$(underpants_trusted_path)" >&2

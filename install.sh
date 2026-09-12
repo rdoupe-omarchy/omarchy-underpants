@@ -1,7 +1,12 @@
 #!/bin/bash
 # Local installation; no root, idle changes, or overwriting unrelated menus.
 set -euo pipefail
-source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+_self="${BASH_SOURCE[0]}"
+if [[ $_self == */* ]]; then
+  source_dir="$(cd -- "${_self%/*}" && pwd)"
+else
+  source_dir="$(pwd)"
+fi
 # shellcheck source=scripts/trusted_exec.sh
 source "$source_dir/scripts/trusted_exec.sh"
 # Match the shell registry's actual discovery location (not XDG_CONFIG_HOME).
